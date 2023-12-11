@@ -1,0 +1,65 @@
+# This is an auto-generated example configuration for loose 🫠
+
+# Here we define what happens when we have X amount of screens connected
+on_screen_count:
+  # If we have 1 screen connected, we will use this section
+  1:
+    # This is an ordered list, so we will first try this configuration
+    # It says that we want to use the screen named eDP-1
+    - eDP-1:
+        # We want to set its resolution to 1920x1080
+        resolution: 1920x1080
+        # and its refresh rate to 60Hz
+        frequency: 60
+
+    # If we rotate the configuration (or previous one fails), we will try this
+    # one below.
+
+    # As you can see, we can have multiple configurations for the same screen.
+    # In this section we don't give any configuration options. This means all
+    # options you'll see are optional. If you don't specify them, they will
+    # be set to the "preferred" settings from xrandr. You can check the preferred
+    # settings by running `xrandr` and looking for `+` in the output.
+    - eDP-1:
+
+    # Please note the screen name starts with an underscore on this one. This means
+    # this is an "alias". When loose starts, it will try to find suitable screens
+    # for all aliases (and it will try to be consistent between starts).
+    # By this way we can define a purposefully vague configuration,
+    # and loose will try to find the best match for it on differently-named screens.
+    - _1:
+        resolution: 1920x1200
+        frequency: 60
+
+  # Now let's say we have 2 screens connected
+  2:
+    # First one is simple, we want to use single screen if any of the screens connected
+    # can supply the resolution/rate we want.
+    - _1:
+        resolution: 3440x1440
+        frequency: 100
+
+    # If we can't find one which matches above rule, we will try to utilize
+    # both screens below. One of them will be the primary screen,
+    # and the other one will be placed to the right of it.
+    # Valid options for placement are: left-of, right-of, above and below
+    #
+    # Rotation is also supported.
+    # Valid values are: normal (default), left, right and inverted.
+    #
+    # Please keep in mind if any of the screens can't supply the resolution we want,
+    # this section will be skipped.
+    - _2:
+        resolution: 1920x1200
+        primary: true
+      _1:
+        resolution: 1920x1200
+        right-of: _2
+        rotate: left
+
+# This is the failback configuration. If we can't find any suitable configuration
+# or something goes wrong, we will rely on this one. So it's a good idea to keep
+# this one as simple as possible. If you're a laptop user, you can use this
+# section to define your laptop screen's exact name.
+global_failback:
+  _1:
