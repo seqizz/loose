@@ -2,7 +2,7 @@
 name = "loose"
 version = "0.0.1"
 description = "A simple tool to apply XrandR configurations"
-authors = ["Gürkan Gür <dontdisturb@gurkan.in>"]
+authors = ["Gürkan <gitoperations@gurkan.in>"]
 
 [tool.poetry.dependencies]
 python = "^3.10"

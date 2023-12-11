@@ -30,7 +30,7 @@ For the testing/development purposes, you can use poetry:
 
 ### Usage
 
-- Set up your desired configuration in a yaml file after reading loose/example_config.yaml
+- Set up your desired configuration in a yaml file after reading the [example config](loose/example_config.yaml)
 - You can declare either explicit monitor names or just alises which starts with underscore while writing your configuration
 - Check if the config is valid with `loose show`
 - Once dust settles after screen connections, trigger `loose rotate`
