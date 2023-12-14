@@ -29,8 +29,7 @@ PY_MAJOR_VERSION = 3
 PY_MINOR_VERSION = 10
 # Can't believe I don't have a portable way to do get the real version
 # Poetry™ bullshit, has to be synced with pyproject.toml
-VERSION = '0.0.5'
-CONFIG_VERSION = f'{VERSION}.4'
+VERSION = '0.0.6'
 
 
 def get_parser(print_help: bool) -> argparse.Namespace:
@@ -163,10 +162,13 @@ def validate_config(config: Dict, logger: logging.Logger):
 
     # _print_and_exit(config['on_screen_count'])
 
-    if has_loops(config['on_screen_count']):
+    loop_fail, message = has_loops(config['on_screen_count'])
+    if loop_fail:
         logger.error(
-            'Config file has loops, please do not refer "below/above/left-of/right-of" '
-            'directions bi-directionally between screens (or refer to itself).'
+            'Config file has loops, please remember we don\'t allow '
+            '"below/above/left-of/right-of" definitions bi-directionally '
+            'between screens (or self-references). Your detected issue was:\n\n'
+            f'{message}'
         )
         exit(1)
 
@@ -191,7 +193,7 @@ def validate_config(config: Dict, logger: logging.Logger):
         exit(1)
 
 
-def has_loops(on_screen_config) -> bool:
+def has_loops(on_screen_config) -> Tuple[bool, str]:
     """Detects whether there is a loop in the graph, for position references
 
     We don't allow:
@@ -200,57 +202,71 @@ def has_loops(on_screen_config) -> bool:
 
     Credit: ChatGPT4 (No way in hell I can write this myself)
     """
+    # Function to build graph from configuration and check for loops
+    def build_graph_and_check_loops(screens):
+        # Create an adjacency list to represent the graph
+        graph = defaultdict(list)
+        # Iterate through each screen ID and their properties
+        for screen_id, properties in screens.items():
+            # Iterate through properties to find directional references
+            for direction, ref_id in properties.items():
+                # Check only directional properties
+                if direction in ['above', 'below', 'left-of', 'right-of']:
+                    # Check for self-reference
+                    if ref_id == screen_id:
+                        # Return True for loop detected and a message
+                        return True, f"There is a self-reference to screen object itself"
+                    # Add a directed edge from current screen to referenced screen
+                    graph[screen_id].append(ref_id)
 
-    graph = defaultdict(dict)
-    # Build the graph with details about each directional relationship
-    for screens in on_screen_config.values():
-        for screen_dict in screens:
-            for screen_id, properties in screen_dict.items():
-                for direction, ref_id in properties.items():
-                    if direction in ['above', 'below', 'left-of', 'right-of']:
-                        if ref_id == screen_id:  # Rule: No screen can refer to itself
-                            return True
-                        if ref_id not in graph[screen_id].values():
-                            graph[screen_id][direction] = ref_id
-                        else:
-                            # Rule: If referred screen ref_ids a different direction back to the screen_id
-                            return True
-                        # Check the reverse direction for a bidirectional link
-                        opposite_dir = {
-                            'above': 'below',
-                            'below': 'above',
-                            'right-of': 'left-of',
-                            'left-of': 'right-of'
-                        }[direction]
-                        # Rule: No bidirectional direct references allowed
-                        if graph.get(ref_id, {}).get(opposite_dir) == screen_id:
-                            return True
-    # Perform DFS to detect whether there is a loop in the graph
-    def dfs(node_id, visited, rec_stack):
-        # If the node_id is in the recursion stack, then we have found a loop
-        if node_id in rec_stack:
-            return True
-        # If the node_id is visited and not in the recursion stack, then no loop is found in this path
-        if node_id in visited:
-            return False
-        visited.add(node_id)
-        rec_stack.add(node_id)
-        # Perform DFS for adjacent nodes
-        for neighbor_id in graph[node_id].values():
-            if dfs(neighbor_id, visited, rec_stack):
-                return True
+        # Function for performing Depth-First Search
+        def dfs(node_id, graph, visited, rec_stack):
+            # If the node is in the recursion stack, a loop is detected
+            if node_id in rec_stack:
+                return True, "There are objects referring to each other within same config section"
+            # If the node was already visited, skip it
+            if node_id in visited:
+                return False, ""
+            # Mark the node as visited and add to recursion stack
+            visited.add(node_id)
+            rec_stack.add(node_id)
+            # Recursively visit all adjacent nodes
+            for neighbor_id in graph[node_id]:
+                has_loop, message = dfs(neighbor_id, graph, visited, rec_stack)
+                if has_loop:
+                    # If a loop is detected in the DFS, propagate the result up
+                    return True, message
+            # Remove the current node from recursion stack after DFS completes
+            rec_stack.remove(node_id)
+            return False, ""
 
-        # Remove node_id from the recursion stack before backtracking
-        rec_stack.remove(node_id)
-        return False
+        # Sets to keep track of visited nodes and the recursion stack
+        visited, rec_stack = set(), set()
+        # Obtain a list of the nodes to iterate over without changing the dict's size
+        nodes = list(graph.keys())
+        # Perform DFS on each node
+        for node_id in nodes:
+            if node_id not in visited:
+                has_loop, message = dfs(node_id, graph, visited, rec_stack)
+                if has_loop:
+                    # If a loop is found, return True and the accompanying message
+                    return True, message.format(config=node_id)
+        # If no loops are found in the graph, return False with an empty message
+        return False, ""
 
-    visited, rec_stack = set(), set()
-    nodes = list(graph.keys())  # Create a static list of nodes to prevent RuntimeError during iteration
-    for node_id in nodes:
-        if dfs(node_id, visited, rec_stack):
-            return True  # Loop detected
+    # Iterate over each screen configuration index and the corresponding sections
+    for _, screens_list in on_screen_config.items():
+        for _, screen_section in enumerate(screens_list):
+            # Ensure the section items are dictionaries before processing
+            screens = {k: v for k, v in screen_section.items() if isinstance(v, dict)}
+            # Use the helper function to check for loops in the current section
+            has_loop, message = build_graph_and_check_loops(screens)
+            if has_loop:
+                # If a loop is detected, return the information immediately
+                return True, message
 
-    return False  # No loops detected in the graph
+    # Return False and an empty message if no loops are found in any configuration
+    return False, ""
 
 
 def _replace_none_with_dict(d):
@@ -730,13 +746,13 @@ def main():
         ):
             conf['is_current'] = True
 
-    main_dict['CONFIG_VERSION'] = CONFIG_VERSION
+    main_dict['VERSION'] = VERSION
 
     # Check if save file exists
     try:
         previous_dict = load_from_disk(save_file)
         # If loose itself is updated, we will start from scratch
-        if previous_dict['CONFIG_VERSION'] != CONFIG_VERSION:
+        if 'VERSION' not in previous_dict or previous_dict['VERSION'] != VERSION:
             logger.debug('Config version mismatch. Scraping the old config.')
             raise FileNotFoundError
         # Compare loaded xrandr output with the current one

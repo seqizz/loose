@@ -9,7 +9,7 @@ This is a helper tool to apply vague Xrandr configurations
 
 I wrote this as a reaction to all other xrandr automation tools which requires you to exactly define your setup (e.g. which monitor has which damn fingerprint, what input name it has etc.) and then failing to set up since you plugged a cable on different port.
 
-Come on dude, I just want to define some non-specific settings. It should not be that hard to say something like:
+Come on dude, I just want to define some non-specific settings. Something like:
 
 - If I plug 1 extra monitor, my preference list:
     1. Switch off the laptop's monitor and only use plugged monitor
@@ -43,12 +43,12 @@ For the testing/development purposes, you can use poetry:
 
 Please see [example config](loose/example_config.yaml) for examples and explanations.
 
-(This was _not_ easy to write btw)
-
+Also:
 ![protip: it was hard](https://paste.gurkan.in/good-sculpin.jpg)
 
 ### TODO
 
+- Ensure default "preferred" resolution works in case of no specific config
 - Implement pre/post commands (good for setting DPI etc.)
 - Add tests
 - Add gotchas about aliases (I had a lot of assumptions while writing this, which I need to document later)
