@@ -57,7 +57,7 @@ def get_parser(print_help: bool) -> argparse.Namespace:
         action='store_true',
         help='Print debug messages to stdout also'
     )
-    sub.add_parser(
+    rotate_parser = sub.add_parser(
         'rotate',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         help='Switch to the next definition on configuation',
@@ -71,6 +71,12 @@ def get_parser(print_help: bool) -> argparse.Namespace:
         ]),
         parents=[common_options],
         add_help=False,
+    )
+    rotate_parser.add_argument(
+        '-r',
+        '--reset',
+        action='store_true',
+        help='Do not check for the next config, apply the first one'
     )
     sub.add_parser(
         'show',
@@ -722,7 +728,10 @@ def main():
 
     if action == 'rotate':
         logger.debug('Got request to rotate.')
-        next_config = get_next_config(active_config=main_dict['active_config'], logger=logger)
+        if args.reset:
+            next_config = main_dict['active_config'][0]
+        else:
+            next_config = get_next_config(active_config=main_dict['active_config'], logger=logger)
         apply_xrandr_command(
             main_dict=main_dict,
             config_to_apply=next_config,
