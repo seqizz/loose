@@ -13,7 +13,6 @@ from os.path import (
     join as path_join,
 )
 from pathlib import Path
-from tomllib import load as toml_load
 from pprint import pprint
 from pykwalify.core import Core
 from subprocess import Popen, check_output
@@ -28,10 +27,9 @@ from yaml import safe_load, dump
 CONFIG_FILE = f'{xdg_config_home()}/loose/config.yaml'
 PY_MAJOR_VERSION = 3
 PY_MINOR_VERSION = 10
-# Can't believe I have to do this to show the real version
-# Poetry™ bullshit
-with open("pyproject.toml", "rb") as f:
-    VERSION = toml_load(f)["tool"]["poetry"]["version"]
+# Can't believe I don't have a portable way to do get the real version
+# Poetry™ bullshit, has to be synced with pyproject.toml
+VERSION = '0.0.4'
 CONFIG_VERSION = f'{VERSION}.4'
 
 
