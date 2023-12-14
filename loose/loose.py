@@ -29,7 +29,7 @@ PY_MAJOR_VERSION = 3
 PY_MINOR_VERSION = 10
 # Can't believe I don't have a portable way to do get the real version
 # Poetry™ bullshit, has to be synced with pyproject.toml
-VERSION = '0.0.4'
+VERSION = '0.0.5'
 CONFIG_VERSION = f'{VERSION}.4'
 
 
@@ -309,6 +309,10 @@ def replace_aliases_with_real_names(
 
     # First rename the aliases to the actual device names
     for device, config in config_to_convert.items():
+        if device == 'is_current':
+            # This is a hacky special key, ignore it
+            continue
+
         interim_config = {}
         if device.startswith('_'):
             # This is a token, replace it with the actual device name
@@ -753,6 +757,7 @@ def main():
     if action == 'rotate':
         logger.debug('Got request to rotate.')
         if args.reset:
+            logger.debug('Reset requested, applying the first config')
             next_config = main_dict['active_config'][0]
         else:
             next_config = get_next_config(active_config=main_dict['active_config'], logger=logger)
