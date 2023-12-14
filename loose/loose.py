@@ -13,6 +13,7 @@ from os.path import (
     join as path_join,
 )
 from pathlib import Path
+from tomllib import load as toml_load
 from pprint import pprint
 from pykwalify.core import Core
 from subprocess import Popen, check_output
@@ -25,9 +26,13 @@ from yaml import safe_load, dump
 
 
 CONFIG_FILE = f'{xdg_config_home()}/loose/config.yaml'
-CONFIG_VERSION = 0.3
 PY_MAJOR_VERSION = 3
 PY_MINOR_VERSION = 10
+# Can't believe I have to do this to show the real version
+# Poetry™ bullshit
+with open("pyproject.toml", "rb") as f:
+    VERSION = toml_load(f)["tool"]["poetry"]["version"]
+CONFIG_VERSION = f'{VERSION}.4'
 
 
 def get_parser(print_help: bool) -> argparse.Namespace:
@@ -42,6 +47,12 @@ def get_parser(print_help: bool) -> argparse.Namespace:
             '',
             'Feel free to use --help toggle for each subcommand below',
         ])
+    )
+    parser.add_argument(
+        '-V',  # Capital to not conflict with --verbose
+        '--version',
+        action='store_true',
+        help='Print version and exit'
     )
     sub = parser.add_subparsers(dest='command')
     common_options = argparse.ArgumentParser()
@@ -100,25 +111,6 @@ def get_parser(print_help: bool) -> argparse.Namespace:
         exit(0)
 
     return args
-
-
-def _compare_states(dict1: Dict, dict2: Dict) -> bool:
-    if len(dict1) != len(dict2):
-        return False
-
-    def sortable_item(value):
-        # This function provides a sortable representation of your dictionary values.
-        # None values are handled by returning a tuple that can be sorted.
-        return sorted(value.items()) if value is not None else (None,)
-
-    values1 = list(dict1.values())
-    values2 = list(dict2.values())
-
-    # Sort the values to ensure they are in the same order for comparison
-    values1.sort(key=sortable_item)
-    values2.sort(key=sortable_item)
-
-    return values1 == values2
 
 
 def enforce_python_version():
@@ -573,9 +565,34 @@ def get_current_state(main_dict: Dict) -> Dict:
                     current_status[device['device_name']] = {
                         'frequency': round(float(frequency['frequency'])),
                         'resolution': f'{mode["resolution_width"]}x{mode["resolution_height"]}',
+                        'primary': device['is_primary'],
+                        'rotate': device['rotation'],
                     }
 
     return current_status
+
+
+def sanitize_config(
+    main_dict: Dict,
+    config_to_convert: Dict,
+    logger: logging.Logger,
+) -> Dict:
+
+    # First replace the aliases with the real device names
+    sanitized_reference_config = replace_aliases_with_real_names(
+        main_dict=main_dict,
+        config_to_convert=config_to_convert,
+        logger=logger,
+    )
+
+    # Then add the implicit values if they are not defined
+    for device, config in sanitized_reference_config.items():
+        if 'rotate' not in config:
+            sanitized_reference_config[device]['rotate'] = 'normal'
+        if 'primary' not in config:
+            sanitized_reference_config[device]['primary'] = False
+
+    return sanitized_reference_config
 
 
 def compare_states(
@@ -593,14 +610,18 @@ def compare_states(
         }
         if 'position' in details:
             sanitized_current_state[device]['position'] = details['position']
+        if 'primary' in details:
+            sanitized_current_state[device]['primary'] = details['primary']
+        if 'rotate' in details:
+            sanitized_current_state[device]['rotate'] = details['rotate']
 
-    replaced_reference_config = replace_aliases_with_real_names(
+    sanitized_reference_config = sanitize_config(
         main_dict=main_dict,
         config_to_convert=reference_config,
         logger=logger,
     )
 
-    return _compare_states(sanitized_current_state, replaced_reference_config)
+    return sanitized_current_state == sanitized_reference_config
 
 
 def get_next_config(active_config: List, logger: logging.Logger) -> Dict:
@@ -669,6 +690,10 @@ def main():
 
     action = sys.argv[1]
 
+    if args.version:
+        print(f'loose 🫠 version: {VERSION}')
+        exit(0)
+
     config = read_config()
 
     # Ensure our state folder exists
@@ -708,11 +733,12 @@ def main():
     # Check if save file exists
     try:
         previous_dict = load_from_disk(save_file)
-        # Compare loaded xrandr output with the current one
-        # If they don't have same device hash, we will start from scratch
+        # If loose itself is updated, we will start from scratch
         if previous_dict['CONFIG_VERSION'] != CONFIG_VERSION:
             logger.debug('Config version mismatch. Scraping the old config.')
             raise FileNotFoundError
+        # Compare loaded xrandr output with the current one
+        # If they don't have same device hash, we will start from scratch
         elif previous_dict['connected_devices'].keys() == main_dict['connected_devices'].keys():
             logger.debug('Devices match with previously saved config.')
         else:
