@@ -1,14 +1,12 @@
 [tool.poetry]
 name = "loose"
-version = "0.0.1"
+version = "0.0.2"
 description = "A simple tool to apply XrandR configurations"
 authors = ["Gürkan <gitoperations@gurkan.in>"]
 
 [tool.poetry.dependencies]
 python = "^3.10"
 typing-extensions = "^4.4.0"
-confuse = "^2.0.0"
-python-xlib = "^0.33"
 jc = "^1.23.6"
 pyyaml = "^6.0.1"
 pykwalify = "^1.8.0"
