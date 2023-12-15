@@ -29,7 +29,7 @@ PY_MAJOR_VERSION = 3
 PY_MINOR_VERSION = 10
 # Can't believe I don't have a portable way to do get the real version
 # Poetry™ bullshit, has to be synced with pyproject.toml
-VERSION = '0.0.6'
+VERSION = '0.0.7'
 
 
 def get_parser(print_help: bool) -> argparse.Namespace:
@@ -159,8 +159,6 @@ def assert_unique_primary(data):
 
 def validate_config(config: Dict, logger: logging.Logger):
     """Validates the config file"""
-
-    # _print_and_exit(config['on_screen_count'])
 
     loop_fail, message = has_loops(config['on_screen_count'])
     if loop_fail:
@@ -324,22 +322,26 @@ def replace_aliases_with_real_names(
     replaced_config = {}
 
     # First rename the aliases to the actual device names
-    for device, config in config_to_convert.items():
-        if device == 'is_current':
+    for alias, config in config_to_convert.items():
+        if alias == 'is_current':
             # This is a hacky special key, ignore it
             continue
 
         interim_config = {}
-        if device.startswith('_'):
-            # This is a token, replace it with the actual device name
-            real_name = find_real_device_name(device, main_dict['connected_devices'], logger)
+        if alias.startswith('_'):
+            # This is an alias, replace it with the actual device name
+            real_name = find_real_device_name(
+                alias=alias,
+                connected_devices=main_dict['connected_devices'],
+                logger=logger
+            )
         else:
-            real_name = device
+            real_name = alias
         interim_config[real_name] = config
 
         # There might also be positioning directives, we have to replace them too
         for key, value in config.items():
-            if key in ['left-of', 'right-of', 'above', 'below']:
+            if key in ['left-of', 'right-of', 'above', 'below'] and value.startswith('_'):
                 interim_config[real_name][key] = find_real_device_name(value, main_dict['connected_devices'], logger)
         replaced_config.update(interim_config)
 
@@ -478,31 +480,46 @@ def assign_aliases(main_dict: Dict, logger: logging.Logger) -> Dict:
 
     main_dict = clear_impossible_configs(main_dict=main_dict, logger=logger)
 
-    # # Get all remaining aliases
-    unassigned_aliases = set()
+    # # Get all remaining aliases (fun fact, set() was not reliable here)
+    unassigned_aliases = []
     for item in main_dict['active_config']:
-        unassigned_aliases.update(item.keys())
-    unassigned_aliases = list(unassigned_aliases)
+        for key in item.keys():
+            if key not in unassigned_aliases:
+                unassigned_aliases.append(key)
 
-    # First check if we have any device specific aliases
     for device, properties in main_dict['connected_devices'].items():
         if properties['aliases'] == []:
-            if any(device in d for d in main_dict['active_config']):
-                # Means this is aliased with its own name
-                for related_conf in [
-                    d for d in main_dict['active_config'] if device in d and d[device] and 'resolution' in d[device]
-                ]:
-                    # Check if the real device can supply these defined resolutions
-                    needed_x, needed_y = (int(x) for x in related_conf[device]['resolution'].split('x'))
-                    if not any(
-                        mode['resolution_width'] == needed_x and mode['resolution_height'] == needed_y for mode in properties['modes']
-                    ):
-                        logger.debug(f'Config "{related_conf}" is not applicable to device "{device}" due to resolution mismatch')
-                        main_dict['active_config'].remove(related_conf)
-                        continue
+            for section in main_dict['active_config']:
+                if device not in section:
+                    # This alias is not same as connected device name, skip
+                    continue
+                # Check if the real device can supply these defined resolutions
+                needed_x, needed_y = None, None
+                # If there is no resolution defined in config, that means we can use any resolution, nice
+                if 'resolution' in section[device]:
+                    needed_x, needed_y = (int(x) for x in section[device]['resolution'].split('x'))
+                # Also check for supported frequencies
+                needed_frequency = None
+                if 'frequency' in section[device]:
+                    needed_frequency = section[device]['frequency']
+
+                # Now validate if there is a required resolution and/or frequency
+                if needed_x and not any(
+                    mode['resolution_width'] == needed_x and mode['resolution_height'] == needed_y for mode in properties['modes']
+                ):
+                    logger.debug(f'Config "{section}" is not applicable to device "{device}" due to resolution mismatch')
+                    main_dict['active_config'].remove(section)
+                    continue
+                if needed_frequency and not any(
+                    frequency['frequency'] == needed_frequency for mode in properties['modes'] for frequency in mode['frequencies']
+                ):
+                    logger.debug(f'Config "{section}" is not applicable to device "{device}" due to frequency mismatch')
+                    main_dict['active_config'].remove(section)
+                    continue
+
                 # Re-check if any applicable configs left
                 if any(device in d for d in main_dict['active_config']):
-                    logger.debug(f'Assigning alias "{device}" to device "{device}"')
+                    logger.debug(f'Assigning device definition "{device}" to device "{device}"')
                     connected_devices[device]['aliases'].append(device)
                     unassigned_aliases.remove(device)
 
@@ -517,41 +534,45 @@ def assign_aliases(main_dict: Dict, logger: logging.Logger) -> Dict:
             logger.debug('Checking devices without any aliases assigned')
         else:
             logger.debug('Checking to spread the remaining aliases')
-        for alias in unassigned_aliases:
+        for alias in unassigned_aliases_copy:
+            if alias not in unassigned_aliases:
+                # This alias is already assigned, skip
+                continue
             for device, properties in main_dict['connected_devices'].items():
                 if _ == 0 and properties['aliases'] != []:
                     # On first loop we will only handle devices without any aliases
                     continue
                 # Test aliases by order to see if the resolutions are applicable
                 logger.debug(f'Checking compatibility of "{alias}" for device "{device}"')
-                # First check if there is any config defined without any special resolution
-                for related_conf in [
-                    d for d in main_dict['active_config'] if alias in d and d[alias] and 'resolution' not in d[alias]
-                ]:
-                    # Yay! We found at least one, just snap the alias to it and don't think about it
-                    logger.debug(f'Assigning alias "{alias}" to device "{device}"')
-                    connected_devices[device]['aliases'].append(alias)
-                    unassigned_aliases_copy.remove(alias)
-                    break
-                if alias not in unassigned_aliases_copy:
-                    # We found a config for this alias, skip on the upper loop too
-                    break
 
-                # At here, we couldn't find any config without a resolution, so we have to check the resolutions
                 mismatch = False
-                related_conf_list = [
-                    d for d in main_dict['active_config'] if alias in d and d[alias] and 'resolution' in d[alias]
-                ]
-                for related_conf in related_conf_list:
-                    needed_x, needed_y = (int(x) for x in related_conf[alias]['resolution'].split('x'))
-                    if not any(
+                for section in main_dict['active_config']:
+                    if alias not in section:
+                        # This alias is not related with this config section, skip
+                        continue
+                    # Check if the real device can supply these defined resolutions
+                    needed_x, needed_y = None, None
+                    # If there is no resolution defined in config, that means we can use any resolution, nice
+                    if 'resolution' in section[alias]:
+                        needed_x, needed_y = (int(x) for x in section[alias]['resolution'].split('x'))
+                    # Also check for supported frequencies
+                    needed_frequency = None
+                    if 'frequency' in section[alias]:
+                        needed_frequency = section[alias]['frequency']
+
+                    # Now validate if there is a required resolution and/or frequency
+                    if needed_x and not any(
                         mode['resolution_width'] == needed_x and mode['resolution_height'] == needed_y for mode in properties['modes']
                     ):
-                        logger.debug(
-                            f'"{device}" can\'t supply resolution "{needed_x}x{needed_y}", '
-                            f'so will not be assigned to alias "{alias}".'
-                        )
+                        logger.debug(f'Config "{section}" is not applicable to device "{device}" due to resolution mismatch')
                         mismatch = True
+                        continue
+                    if needed_frequency and not any(
+                        frequency['frequency'] == needed_frequency for mode in properties['modes'] for frequency in mode['frequencies']
+                    ):
+                        logger.debug(f'Config "{section}" is not applicable to device "{device}" due to frequency mismatch')
+                        mismatch = True
+                        continue
 
                 if mismatch:
                     continue
@@ -559,7 +580,8 @@ def assign_aliases(main_dict: Dict, logger: logging.Logger) -> Dict:
                 # This alias is applicable, at least one of the configs can be applied
                 logger.debug(f'Assigning alias "{alias}" to device "{device}"')
                 connected_devices[device]['aliases'].append(alias)
-                unassigned_aliases_copy.remove(alias)
+                unassigned_aliases.remove(alias)
+                break
 
     for device, properties in main_dict['connected_devices'].items():
         logger.info(f'Determined aliases for device "{device}": {", ".join(properties["aliases"])}')
@@ -613,6 +635,22 @@ def sanitize_config(
     return sanitized_reference_config
 
 
+def _compare_with_empty_values(
+    sanitized_current_state: Dict,
+    sanitized_reference_config: Dict,
+) -> bool:
+    # What matters is the reference config, if there are more items in current state, it's fine
+    for device, config in sanitized_reference_config.items():
+        if device not in sanitized_current_state:
+            return False
+        for key, value in config.items():
+            if key not in sanitized_current_state[device]:
+                return False
+            if sanitized_current_state[device][key] != value:
+                return False
+    return True
+
+
 def compare_states(
     current_state: Dict,
     main_dict: Dict,
@@ -639,7 +677,12 @@ def compare_states(
         logger=logger,
     )
 
-    return sanitized_current_state == sanitized_reference_config
+    result = _compare_with_empty_values(
+        sanitized_current_state=sanitized_current_state,
+        sanitized_reference_config=sanitized_reference_config,
+    )
+
+    return result
 
 
 def get_next_config(active_config: List, logger: logging.Logger) -> Dict:
