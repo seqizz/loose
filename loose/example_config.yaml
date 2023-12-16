@@ -35,6 +35,7 @@ on_screen_count:
   2:
     # First one is simple, we want to use single screen if any of the screens connected
     # can supply the resolution/rate we want.
+    # Please note in this case, other monitor will be disabled.
     - _1:
         resolution: 3440x1440
         frequency: 100
@@ -56,6 +57,16 @@ on_screen_count:
         resolution: 1920x1200
         right-of: _2
         rotate: left
+      hooks:
+        pre:
+          - example command stop
+        post:
+          - 'echo "Xft.dpi: 118" | xrdb -merge'
+          - example command start
+
+    # As you can see we also support hooks, which will run before/after applying the config.
+    # They should be defined in the same level with monitor/alias names.
+    # Please note that a failing hook will not stop the operation, it will be only logged.
 
 # This is the failback configuration. If we can't find any suitable configuration
 # or something goes wrong, we will rely on this one. So it's a good idea to keep
