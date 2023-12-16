@@ -48,7 +48,4 @@ Also:
 
 ### TODO
 
-- Ensure default "preferred" resolution works in case of no specific config
-- Implement pre/post commands (good for setting DPI etc.)
-- Add tests
-- Add gotchas about aliases (I had a lot of assumptions while writing this, which I need to document later)
+Moved to [issues](https://git.gurkan.in/gurkan/loose/issues)
