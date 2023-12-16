@@ -43,7 +43,7 @@ PY_MINOR_VERSION = 10
 RUN_TIMEOUT = 30  # In case of a stuck process, we will kill it after this many seconds
 # Can't believe I don't have a portable way to do get the real version
 # Poetry™ bullshit, has to be synced with pyproject.toml
-VERSION = '0.0.8'
+VERSION = '0.0.9'
 
 
 def get_identifiers(xrandr_output) -> List:
@@ -830,7 +830,7 @@ def main():
             raise FileNotFoundError
         # Compare loaded xrandr output with the current one
         # If they don't have same device hash, we will start from scratch
-        elif previous_dict['connected_products'].sort() == connected_products.sort():
+        elif sorted(previous_dict['connected_products']) == sorted(connected_products):
             logger.debug('Devices match with previously saved data')
             if 'raw_config' in previous_dict and previous_dict['raw_config'] == config:
                 logger.debug('Config also match with previously saved data, using it')
