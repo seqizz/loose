@@ -210,7 +210,11 @@ def save_to_disk(
             if config == current_config:
                 config['is_current'] = True
 
-    logger.debug(f'Saving config to disk: {main_dict["active_config"]}')
+    if current_config is None:
+        logger.debug('Saving initial config to disk')
+    else:
+        logger.debug(f'Saving new active config to disk')
+
     with open(save_path, 'wb') as file:
         pickle.dump(main_dict, file)
 
@@ -504,7 +508,7 @@ def apply_xrandr_command(
             if dry_run:
                 logger.info(f'DRY RUN: Would run pre-hook: {hook}')
             else:
-                logger.debug(f'Running pre-hook: {hook}')
+                logger.info(f'Running pre-hook: {hook}')
                 pre_result = run_command(
                     command=hook,
                     logger=logger
@@ -531,7 +535,7 @@ def apply_xrandr_command(
             if dry_run:
                 logger.info(f'DRY RUN: Would run post-hook: {hook}')
             else:
-                logger.debug(f'Running post-hook: {hook}')
+                logger.info(f'Running post-hook: {hook}')
                 post_result = run_command(
                     command=hook,
                     logger=logger
@@ -856,7 +860,7 @@ def main():
         previous_dict = load_from_disk(save_file)
         # If loose itself is updated, we will start from scratch
         if 'VERSION' not in previous_dict or previous_dict['VERSION'] != VERSION:
-            logger.debug('Config version mismatch. Scraping the old config.')
+            logger.info('Config version mismatch. Scraping the old config.')
             raise FileNotFoundError
         # Compare loaded xrandr output with the current one
         # If they don't have same device hash, we will start from scratch
@@ -864,15 +868,15 @@ def main():
             logger.debug('Devices match with previously saved data')
             if 'raw_config' in previous_dict and previous_dict['raw_config'] == config:
                 if args.command == 'rotate' and args.ensure:
-                    logger.debug('Ensure flag is set and config also match with previously saved data, exiting')
+                    logger.info('Ensure flag is set & no changes detected, exiting peacefully')
                     exit(0)
                 logger.debug('Config also match with previously saved data, using it')
                 main_dict = previous_dict
             else:
-                logger.debug('Config changed since last save, scraping the old config.')
+                logger.info('Config changed since last save, scraping the old config.')
                 raise FileNotFoundError
         else:
-            logger.debug('Devices mismatch due to connected/disconnected devices. Scraping the old config.')
+            logger.info('Devices mismatch due to connected/disconnected devices. Scraping the old config.')
             raise FileNotFoundError
     except FileNotFoundError:
         main_dict = None
