@@ -43,7 +43,7 @@ PY_MINOR_VERSION = 10
 RUN_TIMEOUT = 30  # In case of a stuck process, we will kill it after this many seconds
 # Can't believe I don't have a portable way to do get the real version
 # Poetry™ bullshit, has to be synced with pyproject.toml
-VERSION = '0.0.9'
+VERSION = '0.0.10'
 
 
 def get_identifiers(xrandr_output) -> List:
@@ -108,7 +108,7 @@ def get_parser(print_help: bool) -> argparse.Namespace:
         '-n',
         '--dry-run',
         action='store_true',
-        help='Do not apply the configuration, just print the commands'
+        help='Do not apply any hooks or xrandr commands, just print them'
     )
     common_options.add_argument(
         '-v',
@@ -122,6 +122,7 @@ def get_parser(print_help: bool) -> argparse.Namespace:
         help='Switch to the next definition on configuation',
         description='\n'.join([
             'Switch to the next definition on configuation.',
+            '',
             'If there is no currently applied configuration,',
             'the first one will be applied.',
             '',
@@ -140,14 +141,31 @@ def get_parser(print_help: bool) -> argparse.Namespace:
     sub.add_parser(
         'show',
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        help='Print the current configuration and exit',
+        help='Print the active configuration',
         description='\n'.join([
-            'Print the active configuration and exit.',
+            'Print the active configuration.',
+            '',
             'Useful to check validated configuration and aliases,',
             'as well as next configuration(s) to be applied.',
             '',
             'Example usage:',
             '  loose show',
+        ]),
+        parents=[common_options],
+        add_help=False,
+    )
+    sub.add_parser(
+        'generate',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        help='Generate a sample configuration file',
+        description='\n'.join([
+            'Generate a sample configuration file.',
+            '',
+            'Useful to pipe it into config location and start as a template.',
+            '',
+            'Example usages:',
+            '  loose generate',
+            '  loose generate > ~/.config/loose/config.yaml',
         ]),
         parents=[common_options],
         add_help=False,
@@ -236,10 +254,8 @@ def validate_config(config: Dict, logger: logging.Logger):
         )
         exit(1)
 
-    current_folder = dirname(abspath(__file__))
-    schema_file = path_join(current_folder, 'yamale.yaml')
-
     # Validate the data against the schema
+    current_folder = dirname(abspath(__file__))
     schema_file = path_join(current_folder, 'config_schema.yaml')
 
     core = Core(source_data=config, schema_files=[schema_file])
@@ -798,8 +814,6 @@ def main():
     enforce_python_version()
     args = get_parser(print_help=True if len(sys.argv) == 1 else False)
 
-    action = sys.argv[1]
-
     if args.version:
         print(f'loose 🫠 version: {VERSION}')
         exit(0)
@@ -867,7 +881,7 @@ def main():
             logger=logger,
         )
 
-    if action == 'rotate':
+    if args.command == 'rotate':
         logger.debug('Got request to rotate.')
         next_config = get_next_config(
             active_config=main_dict['active_config'],
@@ -891,7 +905,7 @@ def main():
         else:
             logger.error('Failed to apply the config, exiting!')
             exit(1)
-    elif action == 'show':
+    elif args.command == 'show':
         print(
             f'Currently active config for {len(connected_products)} '
             f'screen{"" if len(connected_products) == 1 else "s"}:'
@@ -934,6 +948,12 @@ def main():
                 indent=7,
             ))
             print('-' * round(get_terminal_size().columns/3))
+    elif args.command == 'generate':
+        # Example config is in the same folder as the script
+        current_folder = dirname(abspath(__file__))
+        schema_file = path_join(current_folder, 'example_config.yaml')
+        with open(schema_file, 'r') as file_stream:
+            print(file_stream.read())
 
 if __name__ == '__main__':
     main()
