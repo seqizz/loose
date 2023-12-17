@@ -43,7 +43,7 @@ PY_MINOR_VERSION = 10
 RUN_TIMEOUT = 30  # In case of a stuck process, we will kill it after this many seconds
 # Can't believe I don't have a portable way to do get the real version
 # Poetry™ bullshit, has to be synced with pyproject.toml
-VERSION = '0.0.10'
+VERSION = '0.0.11'
 
 
 def get_identifiers(xrandr_output) -> List:
@@ -132,11 +132,18 @@ def get_parser(print_help: bool) -> argparse.Namespace:
         parents=[common_options],
         add_help=False,
     )
-    rotate_parser.add_argument(
+    rotate_group = rotate_parser.add_mutually_exclusive_group()
+    rotate_group.add_argument(
         '-r',
         '--reset',
         action='store_true',
         help='Do not check for the next config, apply the first one'
+    )
+    rotate_group.add_argument(
+        '-e',
+        '--ensure',
+        action='store_true',
+        help='Only apply changes if connected devices or config changed',
     )
     sub.add_parser(
         'show',
@@ -818,6 +825,15 @@ def main():
         print(f'loose 🫠 version: {VERSION}')
         exit(0)
 
+    # Let's handle this first, so we can exit early
+    if args.command == 'generate':
+        # Example config is in the same folder as the script
+        current_folder = dirname(abspath(__file__))
+        schema_file = path_join(current_folder, 'example_config.yaml')
+        with open(schema_file, 'r') as file_stream:
+            print(file_stream.read())
+        exit(0)
+
     config = read_config()
 
     # Ensure our state folder exists
@@ -847,6 +863,9 @@ def main():
         elif sorted(previous_dict['connected_products']) == sorted(connected_products):
             logger.debug('Devices match with previously saved data')
             if 'raw_config' in previous_dict and previous_dict['raw_config'] == config:
+                if args.command == 'rotate' and args.ensure:
+                    logger.debug('Ensure flag is set and config also match with previously saved data, exiting')
+                    exit(0)
                 logger.debug('Config also match with previously saved data, using it')
                 main_dict = previous_dict
             else:
@@ -906,10 +925,7 @@ def main():
             logger.error('Failed to apply the config, exiting!')
             exit(1)
     elif args.command == 'show':
-        print(
-            f'Currently active config for {len(connected_products)} '
-            f'screen{"" if len(connected_products) == 1 else "s"}:'
-        )
+        print('Currently active config:')
         print()
         print('-' * round(get_terminal_size().columns/3))
 
@@ -948,12 +964,6 @@ def main():
                 indent=7,
             ))
             print('-' * round(get_terminal_size().columns/3))
-    elif args.command == 'generate':
-        # Example config is in the same folder as the script
-        current_folder = dirname(abspath(__file__))
-        schema_file = path_join(current_folder, 'example_config.yaml')
-        with open(schema_file, 'r') as file_stream:
-            print(file_stream.read())
 
 if __name__ == '__main__':
     main()
