@@ -920,13 +920,14 @@ def main():
             dry_run=args.dry_run,
         )
         if run_result:
-            # Save the state to disk with new current tag
-            save_to_disk(
-                main_dict=main_dict,
-                save_path=save_file,
-                logger=logger,
-                current_config=next_config
-            )
+            if not args.dry_run:
+                # Save the state to disk with new current tag
+                save_to_disk(
+                    main_dict=main_dict,
+                    save_path=save_file,
+                    logger=logger,
+                    current_config=next_config
+                )
         else:
             logger.error('Failed to apply the config, exiting!')
             exit(1)
