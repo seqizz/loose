@@ -43,7 +43,7 @@ PY_MINOR_VERSION = 10
 RUN_TIMEOUT = 30  # In case of a stuck process, we will kill it after this many seconds
 # Can't believe I don't have a portable way to do get the real version
 # Poetry™ bullshit, has to be synced with pyproject.toml
-VERSION = '0.1.1'
+VERSION = '0.1.2'
 
 
 def get_identifiers(xrandr_output) -> List:
@@ -179,8 +179,21 @@ def get_parser(print_help: bool) -> argparse.Namespace:
     )
     args = parser.parse_args()
 
+    # Let's handle one-shot actions first, so we can exit early
     if print_help:
         parser.print_help()
+        exit(0)
+
+    if args.version:
+        print(f'loose 🫠 version: {VERSION}')
+        exit(0)
+
+    if args.command == 'generate':
+        # Example config is in the same folder as the script
+        current_folder = dirname(abspath(__file__))
+        schema_file = path_join(current_folder, 'example_config.yaml')
+        with open(schema_file, 'r') as file_stream:
+            print(file_stream.read())
         exit(0)
 
     return args
@@ -213,7 +226,7 @@ def save_to_disk(
     if current_config is None:
         logger.debug('Saving initial config to disk')
     else:
-        logger.debug(f'Saving new active config to disk')
+        logger.debug('Saving new active config to disk')
 
     with open(save_path, 'wb') as file:
         pickle.dump(main_dict, file)
@@ -303,7 +316,7 @@ def has_loops(on_screen_config) -> Tuple[bool, str]:
                     # Check for self-reference
                     if ref_id == screen_id:
                         # Return True for loop detected and a message
-                        return True, f"There is a self-reference to screen object itself"
+                        return True, 'There is a self-reference to screen object itself'
                     # Add a directed edge from current screen to referenced screen
                     graph[screen_id].append(ref_id)
 
@@ -823,22 +836,123 @@ def get_active_config(
     return config['on_screen_count'][connected_count]
 
 
+def rotate(
+    main_dict: Dict,
+    args: argparse.Namespace,
+    save_file: str,
+    logger: logging.Logger,
+):
+    """Rotates the current config to the next one"""
+    logger.debug('Got request to rotate.')
+    next_config = get_next_config(
+        active_config=main_dict['active_config'],
+        reset=args.reset,
+        logger=logger,
+    )
+    run_result = apply_xrandr_command(
+        main_dict=main_dict,
+        config_to_apply=next_config,
+        logger=logger,
+        dry_run=args.dry_run,
+    )
+    if run_result:
+        if not args.dry_run:
+            # Save the state to disk with new current tag
+            save_to_disk(
+                main_dict=main_dict,
+                save_path=save_file,
+                logger=logger,
+                current_config=next_config
+            )
+    else:
+        logger.error('Failed to apply the config, exiting!')
+        exit(1)
+
+
+def show(
+    main_dict: Dict,
+    config: Dict,
+    logger: logging.Logger,
+):
+    """Pretty-prints the current config to stdout"""
+    print('Currently active config:')
+    print()
+    print('-' * round(get_terminal_size().columns/3))
+
+    for conf in main_dict['active_config']:
+        current = False
+        if 'is_current' in conf:
+            current = True
+            del conf['is_current']
+        converted_config = replace_aliases_with_real_names(
+            main_dict=main_dict,
+            config_to_convert=conf,
+            logger=logger,
+        )
+        if current:
+            print('👉 ', end='')
+        else:
+            print('  ', end='')
+        print(dump(
+            converted_config,
+            default_flow_style=False,
+            indent=7,
+        ))
+        print('-' * round(get_terminal_size().columns/3))
+
+    if 'global_failback' in config:
+        print('-' * round(get_terminal_size().columns/3))
+        print('Global failback directive:')
+        print()
+        print(dump(
+            replace_aliases_with_real_names(
+                main_dict=main_dict,
+                config_to_convert=config['global_failback'],
+                logger=logger,
+            ),
+            default_flow_style=False,
+            indent=7,
+        ))
+        print('-' * round(get_terminal_size().columns/3))
+
+
+def fresh_start(
+    args: argparse.Namespace,
+    config: Dict,
+    save_file: str,
+    connected_products: List,
+    logger: logging.Logger,
+) -> Dict:
+    """Creates a fresh state file in case of a new config or new devices"""
+
+    main_dict = parse_xrandr()
+    main_dict['raw_config'] = deepcopy(config)
+
+    main_dict['active_config'] = get_active_config(
+        main_dict=main_dict,
+        config=config,
+        connected_count=len(connected_products),
+        logger=logger,
+        dry_run=args.dry_run,
+    )
+    main_dict = assign_aliases(main_dict=main_dict, logger=logger)
+
+    main_dict['VERSION'] = VERSION
+    main_dict['connected_products'] = connected_products
+
+    # And at last, save the state to disk
+    save_to_disk(
+        main_dict=main_dict,
+        save_path=save_file,
+        logger=logger,
+    )
+
+    return main_dict
+
+
 def main():
     enforce_python_version()
     args = get_parser(print_help=True if len(sys.argv) == 1 else False)
-
-    if args.version:
-        print(f'loose 🫠 version: {VERSION}')
-        exit(0)
-
-    # Let's handle this first, so we can exit early
-    if args.command == 'generate':
-        # Example config is in the same folder as the script
-        current_folder = dirname(abspath(__file__))
-        schema_file = path_join(current_folder, 'example_config.yaml')
-        with open(schema_file, 'r') as file_stream:
-            print(file_stream.read())
-        exit(0)
 
     config = read_config()
 
@@ -884,93 +998,28 @@ def main():
         main_dict = None
 
     if main_dict is None:
-        main_dict = parse_xrandr()
-        main_dict['raw_config'] = deepcopy(config)
-
-        main_dict['active_config'] = get_active_config(
-            main_dict=main_dict,
+        main_dict = fresh_start(
+            args=args,
             config=config,
-            connected_count=len(connected_products),
-            logger=logger,
-            dry_run=args.dry_run,
-        )
-        main_dict = assign_aliases(main_dict=main_dict, logger=logger)
-
-        main_dict['VERSION'] = VERSION
-        main_dict['connected_products'] = connected_products
-
-        # And at last, save the state to disk
-        save_to_disk(
-            main_dict=main_dict,
-            save_path=save_file,
+            save_file=save_file,
+            connected_products=connected_products,
             logger=logger,
         )
 
     if args.command == 'rotate':
-        logger.debug('Got request to rotate.')
-        next_config = get_next_config(
-            active_config=main_dict['active_config'],
-            reset=args.reset,
-            logger=logger,
-        )
-        run_result = apply_xrandr_command(
+        rotate(
             main_dict=main_dict,
-            config_to_apply=next_config,
+            args=args,
+            save_file=save_file,
             logger=logger,
-            dry_run=args.dry_run,
         )
-        if run_result:
-            if not args.dry_run:
-                # Save the state to disk with new current tag
-                save_to_disk(
-                    main_dict=main_dict,
-                    save_path=save_file,
-                    logger=logger,
-                    current_config=next_config
-                )
-        else:
-            logger.error('Failed to apply the config, exiting!')
-            exit(1)
     elif args.command == 'show':
-        print('Currently active config:')
-        print()
-        print('-' * round(get_terminal_size().columns/3))
+        show(
+            main_dict=main_dict,
+            config=config,
+            logger=logger,
+        )
 
-        for conf in main_dict['active_config']:
-            current = False
-            if 'is_current' in conf:
-                current = True
-                del conf['is_current']
-            converted_config = replace_aliases_with_real_names(
-                main_dict=main_dict,
-                config_to_convert=conf,
-                logger=logger,
-            )
-            if current:
-                print('👉 ', end='')
-            else:
-                print('  ', end='')
-            print(dump(
-                converted_config,
-                default_flow_style=False,
-                indent=7,
-            ))
-            print('-' * round(get_terminal_size().columns/3))
-
-        if 'global_failback' in config:
-            print('-' * round(get_terminal_size().columns/3))
-            print('Global failback directive:')
-            print()
-            print(dump(
-                replace_aliases_with_real_names(
-                    main_dict=main_dict,
-                    config_to_convert=config['global_failback'],
-                    logger=logger,
-                ),
-                default_flow_style=False,
-                indent=7,
-            ))
-            print('-' * round(get_terminal_size().columns/3))
 
 if __name__ == '__main__':
     main()
