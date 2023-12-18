@@ -9,9 +9,9 @@ python = "^3.10"
 typing-extensions = "^4.4.0"
 jc = "^1.23.6"
 pyyaml = "^6.0.1"
-pykwalify = "^1.8.0"
 xdg-base-dirs = "^6.0.1"
 pyedid = "^1.0.3"
+yamale = "^4.0.4"
 
 [tool.poetry.dev-dependencies]
 

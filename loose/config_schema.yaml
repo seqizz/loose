@@ -1,85 +1,20 @@
-type: map
-mapping:
-  global_failback:
-    type: map
-    mapping:
-      regex;(.*):
-        type: map
-        required: False
-        mapping:
-          primary:
-            type: bool
-            required: False
-          frequency:
-            type: int
-            required: False
-          resolution:
-            type: str
-            pattern: "^[0-9]+x[0-9]+$"
-            required: False
-          left-of:
-            type: str
-            required: False
-          right-of:
-            type: str
-            required: False
-          above:
-            type: str
-            required: False
-          below:
-            type: str
-            required: False
-          rotate:
-            type: str
-            enum:
-            - "normal"
-            - "left"
-            - "right"
-            - "inverted"
-            required: False
-  on_screen_count:
-    type: map
-    allowempty: True
-    matching-rule: all
-    mapping:
-      regex;(^\d+$):
-        type: seq
-        sequence:
-          - type: map
-            allowempty: True
-            matching-rule: all
-            mapping:
-              regex;([.*]?):  # Basically any key
-                type: map
-                allowempty: True
-                mapping:
-                  primary:
-                    type: bool
-                    required: False
-                  frequency:
-                    type: int
-                    required: False
-                  resolution:
-                    type: str
-                    pattern: "^[0-9]+x[0-9]+$"
-                    required: False
-                  left-of:
-                    type: str
-                    required: False
-                  right-of:
-                    type: str
-                    required: False
-                  above:
-                    type: str
-                    required: False
-                  below:
-                    type: str
-                    required: False
-                  rotate:
-                    type: str
-                    enum:
-                    - "normal"
-                    - "left"
-                    - "right"
-                    - "inverted"
-                    required: False
+# schema.yaml
+on_screen_count: map(list(include('screen_config')), key=int())
+global_failback: map(include('device'), key=str())
+
+---
+
+screen_config:
+  map(any(include('device'), include('hooks')), key=str(), required=False)
+
+device:
+  resolution: str(required=False)
+  frequency: int(required=False)
+  primary: bool(required=False)
+  left-of: str(required=False)
+  disabled: bool(required=False)
+
+hooks:
+  post: list(str(), required=False)
+  pre: list(str(), required=False)
+

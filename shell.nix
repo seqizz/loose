@@ -20,7 +20,7 @@ pkgs.mkShell {
     propagatedBuildInputs = with python.pkgs; [
       jc
       pyyaml
-      pykwalify
+      yamale
       xdg-base-dirs
     ];
 }

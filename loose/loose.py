@@ -6,6 +6,7 @@ import logging
 import pickle
 import sys
 import subprocess
+import yamale
 from shutil import which
 from copy import deepcopy
 from collections import defaultdict
@@ -20,7 +21,6 @@ from os.path import (
 )
 from pathlib import Path
 from pprint import pprint
-from pykwalify.core import Core
 from typing import (
     Dict,
     List,
@@ -269,18 +269,15 @@ def validate_config(config: Dict, logger: logging.Logger):
     current_folder = dirname(abspath(__file__))
     schema_file = path_join(current_folder, 'config_schema.yaml')
 
-    core = Core(source_data=config, schema_files=[schema_file])
-
-    # Prevent pykwalify from printing to stdout itself
-    logging.getLogger('pykwalify.core').handlers = [logging.NullHandler()]
-
+    schema = yamale.make_schema(schema_file)
+    data = yamale.make_data(CONFIG_FILE)
     try:
-        core.validate(raise_exception=True)
+        yamale.validate(schema, data)
         assert_unique_primary(config)
         logger.debug('Validation of configuration successful.')
     except Exception as e:
         logger.error('Validation of configuration failed. Details:')
-        pprint(e.args[0], width=get_terminal_size().columns)
+        print(str(e))
         exit(1)
 
 
