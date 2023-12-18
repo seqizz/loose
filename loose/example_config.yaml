@@ -68,9 +68,28 @@ on_screen_count:
     # They should be defined in the same level with monitor/alias names.
     # Please note that a failing hook will not stop the operation, it will be only logged.
 
+  3:
+    - _1:
+        primary: true
+      _2:
+        right-of: _1
+      eDP-1:
+        disabled: true
+    - _1:
+        right-of: _1
+      _2:
+        primary: true
+      eDP-1:
+        disabled: true
+
+    # You can guess what we're trying to do above: Explicitly disabling the laptop's monitor
+    # (eDP-1) and putting 2 extra screens next to each other. We prefer the one on the left
+    # to be the primary, so we have 2 configuration we can easily swap by "rotate"
+
 # This is the failback configuration. If we can't find any suitable configuration
 # or something goes wrong, we will rely on this one. So it's a good idea to keep
 # this one as simple as possible. If you're a laptop user, you can use this
 # section to define your laptop screen's exact name.
+# Also please note that global_failback only supports single device configuration, not a list!
 global_failback:
   _1:

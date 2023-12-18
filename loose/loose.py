@@ -467,6 +467,11 @@ def apply_xrandr_command(
     xrandr_command = [xrandr_binary]
     for device, config in replaced_config.items():
         xrandr_command += ['--output', device]
+        if 'disabled' in config:
+            xrandr_command += ['--off']
+            # We don't care about other options if the device is disabled
+            continue
+
         if 'resolution' in config:
             xrandr_command += ['--mode', config['resolution']]
         else:
