@@ -213,7 +213,7 @@ def get_parser(print_help: bool) -> argparse.Namespace:
         # Example config is in the same folder as the script
         current_folder = dirname(abspath(__file__))
         schema_file = path_join(current_folder, 'example_config.yaml')
-        with open(schema_file, 'r') as file_stream:
+        with open(schema_file) as file_stream:
             print(file_stream.read())
         exit(0)
 
@@ -279,11 +279,11 @@ def assert_unique_primary(data):
         for single_config in config_list:
             primary_count = sum(1 for _, config in single_config.items() if config.get('primary', False))
             if primary_count > 1:
-                raise ValueError((
+                raise ValueError(
                     f'Multiple "primary" entries found within the same '
                     f'configuration list under on_screen_count->{screen_count} '
                     f'(index {config_list.index(single_config)})'
-                ))
+                )
 
 
 def validate_config(config: Dict, logger: logging.Logger):
@@ -401,7 +401,7 @@ def _replace_none_with_dict(d):
 
 def read_config() -> Dict:
     try:
-        with open(f'{CONFIG_FILE}', 'r') as file_stream:
+        with open(f'{CONFIG_FILE}') as file_stream:
             config = safe_load(file_stream)
     except FileNotFoundError:
         print(f'Config file not found at: {CONFIG_FILE} !')
