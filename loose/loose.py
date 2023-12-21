@@ -7,6 +7,7 @@ import pickle
 import sys
 import subprocess
 import yamale
+from importlib.util import find_spec
 from shutil import which
 from re import compile
 from copy import deepcopy
@@ -117,6 +118,11 @@ def get_parser(print_help: bool) -> argparse.Namespace:
             'Feel free to use --help toggle for each subcommand below',
         ])
     )
+    # We will add shtab, but only if it is installed
+    # Used to include shell completion in the package
+    if find_spec('shtab'):
+        import shtab
+        shtab.add_argument_to(parser, ['-s', '--shell-completion'])
     parser.add_argument(
         '-V',  # Capital to not conflict with --verbose
         '--version',
