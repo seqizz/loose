@@ -1,6 +1,6 @@
 # Loose 🫠
 
-![dall-e is stupid as hell](https://paste.gurkan.in/renewed-toucan.com-optijpeg.jpg)
+![dall-e is stupid as hell](https://paste.gurkan.in/merry-impala.com-resize.jpg)
 
 This is a helper tool to apply vague Xrandr configurations
 
