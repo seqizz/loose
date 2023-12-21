@@ -49,7 +49,10 @@ VERSION = '0.1.3'
 
 
 def get_identifiers(xrandr_output) -> Dict:
-    """Returns a tuple with EDID product_id's of the connected devices and active monitor count"""
+    """Returns a dict with EDID product_id's of the connected devices and active monitor count
+
+    It is used to check if the saved state is still valid
+    """
 
     edid_list = get_edid_from_xrandr_verbose(xrandr_output)
     product_ids = [parse_edid(device).product_id for device in edid_list]
@@ -61,10 +64,8 @@ def get_identifiers(xrandr_output) -> Dict:
     # and be faster
     active_monitor_pattern = compile(r" connected (primary )?\d+x\d+\+\d+\+\d+")
 
-    # Initialize active monitor count to zero
     active_monitor_count = 0
 
-    # Iterate over each line and use regex to find active monitors
     for line in decoded_randr:
         if active_monitor_pattern.search(line):
             active_monitor_count += 1
