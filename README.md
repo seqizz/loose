@@ -1,5 +1,7 @@
 # Loose 🫠
 
+![dall-e is stupid as hell](https://paste.gurkan.in/renewed-toucan.com-optijpeg.jpg)
+
 This is a helper tool to apply vague Xrandr configurations
 
 > This is still an alpha software, use at your own risk. I am planning to add some features and polish it a bit more before recommending it.
@@ -31,10 +33,6 @@ Come on, I just want to define some non-specific settings. Something like:
 - Something failed bad? Then it will try the global failback option defined in the config
 
 I highly recommend checking the [example config](loose/example_config.yaml) for examples and explanations.
-
-Also:
-
-![protip: it was hard](https://paste.gurkan.in/good-sculpin.jpg)
 
 ### Installation (What installation?)
 
