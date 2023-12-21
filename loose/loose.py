@@ -8,6 +8,7 @@ import sys
 import subprocess
 import yamale
 from shutil import which
+from re import compile
 from copy import deepcopy
 from collections import defaultdict
 from os import (
@@ -40,17 +41,37 @@ from pyedid import (
 CONFIG_FILE = f'{xdg_config_home()}/loose/config.yaml'
 PY_MAJOR_VERSION = 3
 PY_MINOR_VERSION = 10
-RUN_TIMEOUT = 30  # In case of a stuck process, we will kill it after this many seconds
+RUN_TIMEOUT_SEC = 30  # In case of a stuck process
 # Can't believe I don't have a portable way to do get the real version
 # Poetry™ bullshit, has to be synced with pyproject.toml
 VERSION = '0.1.2'
 
 
-def get_identifiers(xrandr_output) -> List:
-    """Returns the EDID product_id's of the connected devices"""
+def get_identifiers(xrandr_output) -> Dict:
+    """Returns a tuple with EDID product_id's of the connected devices and active monitor count"""
 
     edid_list = get_edid_from_xrandr_verbose(xrandr_output)
-    return [parse_edid(device).product_id for device in edid_list]
+    product_ids = [parse_edid(device).product_id for device in edid_list]
+
+    decoded_randr = xrandr_output.decode('utf-8').splitlines()
+
+    # Active monitors will have a pattern like "connected primary 1920x1080+0+0"
+    # We are using regex sadly, but it is to not run another external command
+    # and be faster
+    active_monitor_pattern = compile(r" connected (primary )?\d+x\d+\+\d+\+\d+")
+
+    # Initialize active monitor count to zero
+    active_monitor_count = 0
+
+    # Iterate over each line and use regex to find active monitors
+    for line in decoded_randr:
+        if active_monitor_pattern.search(line):
+            active_monitor_count += 1
+
+    return {
+        'ids': sorted(product_ids),
+        'active_count': active_monitor_count,
+    }
 
 
 def run_command(
@@ -62,14 +83,14 @@ def run_command(
     try:
         result = subprocess.run(
             command,
-            timeout=RUN_TIMEOUT,
+            timeout=RUN_TIMEOUT_SEC,
             env=environ,  # Pass the current environment
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             shell=True,
         )
     except subprocess.TimeoutExpired:
-        logger.critical(f'Command took more than {RUN_TIMEOUT} seconds, aborted: {command}')
+        logger.critical(f'Command took more than {RUN_TIMEOUT_SEC} seconds, aborted: {command}')
         return 1
 
     logger.debug(f'Return code was: {result.returncode}')
@@ -920,7 +941,7 @@ def fresh_start(
     args: argparse.Namespace,
     config: Dict,
     save_file: str,
-    connected_products: List,
+    identifiers: Dict,
     logger: logging.Logger,
 ) -> Dict:
     """Creates a fresh state file in case of a new config or new devices"""
@@ -931,14 +952,14 @@ def fresh_start(
     main_dict['active_config'] = get_active_config(
         main_dict=main_dict,
         config=config,
-        connected_count=len(connected_products),
+        connected_count=len(identifiers['ids']),
         logger=logger,
         dry_run=args.dry_run,
     )
     main_dict = assign_aliases(main_dict=main_dict, logger=logger)
 
     main_dict['VERSION'] = VERSION
-    main_dict['connected_products'] = connected_products
+    main_dict['identifiers'] = identifiers
 
     # And at last, save the state to disk
     save_to_disk(
@@ -968,9 +989,23 @@ def main():
     # First check if we have a saved state and they match with connected devices
     # We rely on product_id's from EDID, they are supposed to be unique
     randr = subprocess.check_output(['xrandr', '--verbose'])
-    connected_products = get_identifiers(randr)
+    identifiers = get_identifiers(randr)
 
-    logger.info(f'Found {len(connected_products)} connected screen{"" if len(connected_products) == 1 else "s"}')
+    logger.info(
+        f'Found {len(identifiers["ids"])} connected screen{"" if len(identifiers["ids"]) == 1 else "s"}.'
+    )
+    # A bit annoying, but we are composing proper sentences here
+    if len(identifiers['ids']) == 1:
+        if identifiers['active_count'] != 1:
+            logger.info('It is somehow.. not active??')
+    else:
+        if identifiers['active_count'] == len(identifiers['ids']):
+            logger.info('All of them are active.')
+        else:
+            logger.info(
+                f'{identifiers["active_count"]} of them '
+                f'{"are" if identifiers["active_count"] > 1 else "is"} active.'
+            )
 
     try:
         previous_dict = load_from_disk(save_file)
@@ -980,7 +1015,7 @@ def main():
             raise FileNotFoundError
         # Compare loaded xrandr output with the current one
         # If they don't have same device hash, we will start from scratch
-        elif sorted(previous_dict['connected_products']) == sorted(connected_products):
+        elif previous_dict['identifiers'] == identifiers:
             logger.debug('Devices match with previously saved data')
             if 'raw_config' in previous_dict and previous_dict['raw_config'] == config:
                 if args.command == 'rotate' and args.ensure:
@@ -992,7 +1027,9 @@ def main():
                 logger.info('Config changed since last save, scraping the old config.')
                 raise FileNotFoundError
         else:
-            logger.info('Devices mismatch due to connected/disconnected devices. Scraping the old config.')
+            logger.info(
+                'Config mismatch due to (dis)connected and/or (de)activated devices. Scraping the old config.'
+            )
             raise FileNotFoundError
     except FileNotFoundError:
         main_dict = None
@@ -1002,7 +1039,7 @@ def main():
             args=args,
             config=config,
             save_file=save_file,
-            connected_products=connected_products,
+            identifiers=identifiers,
             logger=logger,
         )
 
