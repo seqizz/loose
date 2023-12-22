@@ -12,11 +12,11 @@ on_screen_count:
         # and its refresh rate to 60Hz
         frequency: 60
 
-    # If we rotate the configuration (or previous one fails), we will try this
-    # one below.
-
     # As you can see, we can have multiple configurations for the same screen.
-    # In this section we don't give any configuration options. This means all
+    # If we rotate the configuration (or previous one is unapplicable
+    # due to declared screen's capabilities), we will try the next one.
+
+    # In next preference we don't give any configuration options. This means all
     # options you'll see are optional. If you don't specify them, they will
     # be set to the "preferred" settings from xrandr. You can check the preferred
     # settings by running `xrandr` and looking for `+` in the output.
@@ -25,17 +25,18 @@ on_screen_count:
     # Please note the screen name starts with an underscore on this one. This means
     # this is an "alias". When loose starts, it will try to find suitable screens
     # for all aliases (and it will try to be consistent between starts).
-    # By this way we can define a purposefully vague configuration,
-    # and loose will try to find the best match for it on differently-named screens.
+    # By this way we can define (purposefully) vague configurations,
+    # and loose will try to find the best match for it on screens which
+    # will have different names/capabilities.
     - _1:
         resolution: 1920x1200
         frequency: 60
 
   # Now let's say we have 2 screens connected
   2:
-    # First one is simple, we want to use single screen if any of the screens connected
-    # can supply the resolution/rate we want.
-    # Please note in this case, other monitor will be disabled.
+    # First one is simple, we want to use single screen if
+    # any of the screens connected can supply the resolution/rate we want.
+    # Please note: In this case other monitor will be "disabled".
     - _1:
         resolution: 3440x1440
         frequency: 100
@@ -82,9 +83,13 @@ on_screen_count:
       eDP-1:
         disabled: true
 
+
     # You can guess what we're trying to do above: Explicitly disabling the laptop's monitor
     # (eDP-1) and putting 2 extra screens next to each other. We prefer the one on the left
-    # to be the primary, so we have 2 configuration we can easily swap by "rotate"
+    # to be the primary.
+    # Your monitors can supply the needed resolutions but you might not like the placement
+    # and want to swap it. (E.g. loose assigned _1 alias to the "wrong" monitor).
+    # With this configuration, you can simply rotate to the next one.
 
 # This is the failback configuration. If we can't find any suitable configuration
 # or something goes wrong, we will rely on this one. So it's a good idea to keep
