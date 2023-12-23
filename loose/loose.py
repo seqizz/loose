@@ -77,8 +77,8 @@ def get_identifiers(xrandr_output) -> Dict:
 
 
 def run_command(
-        command: str,
-        logger: logging.Logger,
+    command: str,
+    logger: logging.Logger,
 ) -> int:
     """Runs given command and returns the return code"""
 
@@ -92,7 +92,9 @@ def run_command(
             shell=True,
         )
     except subprocess.TimeoutExpired:
-        logger.critical(f'Command took more than {RUN_TIMEOUT_SEC} seconds, aborted: {command}')
+        logger.critical(
+            f'Command took more than {RUN_TIMEOUT_SEC} seconds, aborted: {command}'
+        )
         return 1
 
     logger.debug(f'Return code was: {result.returncode}')
@@ -109,26 +111,29 @@ def run_command(
 def get_parser(print_help: bool) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        description='\n'.join([
-            'Welcome to loose 🫠',
-            '',
-            'loose is a tool to manage your multi-monitor setup on Linux.',
-            'It allows you to define your desired setup in a YAML file ',
-            'in a flexible way and rotate between them.',
-            '',
-            'Feel free to use --help toggle for each subcommand below',
-        ])
+        description='\n'.join(
+            [
+                'Welcome to loose 🫠',
+                '',
+                'loose is a tool to manage your multi-monitor setup on Linux.',
+                'It allows you to define your desired setup in a YAML file ',
+                'in a flexible way and rotate between them.',
+                '',
+                'Feel free to use --help toggle for each subcommand below',
+            ]
+        ),
     )
     # We will add shtab, but only if it is installed
     # Used to include shell completion in the package
     if find_spec('shtab'):
         import shtab
+
         shtab.add_argument_to(parser, ['-s', '--shell-completion'])
     parser.add_argument(
         '-V',  # Capital to not conflict with --verbose
         '--version',
         action='store_true',
-        help='Print version and exit'
+        help='Print version and exit',
     )
     sub = parser.add_subparsers(dest='command')
     common_options = argparse.ArgumentParser()
@@ -136,27 +141,29 @@ def get_parser(print_help: bool) -> argparse.Namespace:
         '-n',
         '--dry-run',
         action='store_true',
-        help='Do not apply any hooks or xrandr commands, just print them'
+        help='Do not apply any hooks or xrandr commands, just print them',
     )
     common_options.add_argument(
         '-v',
         '--verbose',
         action='store_true',
-        help='Print debug messages to stdout also'
+        help='Print debug messages to stdout also',
     )
     rotate_parser = sub.add_parser(
         'rotate',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         help='Switch to the next definition on configuation',
-        description='\n'.join([
-            'Switch to the next definition on configuation.',
-            '',
-            'If there is no currently applied configuration,',
-            'the first one will be applied.',
-            '',
-            'Example usage:',
-            '  loose rotate',
-        ]),
+        description='\n'.join(
+            [
+                'Switch to the next definition on configuation.',
+                '',
+                'If there is no currently applied configuration,',
+                'the first one will be applied.',
+                '',
+                'Example usage:',
+                '  loose rotate',
+            ]
+        ),
         parents=[common_options],
         add_help=False,
     )
@@ -165,7 +172,7 @@ def get_parser(print_help: bool) -> argparse.Namespace:
         '-r',
         '--reset',
         action='store_true',
-        help='Do not check for the next config, apply the first one'
+        help='Do not check for the next config, apply the first one',
     )
     rotate_group.add_argument(
         '-e',
@@ -177,15 +184,17 @@ def get_parser(print_help: bool) -> argparse.Namespace:
         'show',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         help='Print the active configuration',
-        description='\n'.join([
-            'Print the active configuration.',
-            '',
-            'Useful to check validated configuration and aliases,',
-            'as well as next configuration(s) to be applied.',
-            '',
-            'Example usage:',
-            '  loose show',
-        ]),
+        description='\n'.join(
+            [
+                'Print the active configuration.',
+                '',
+                'Useful to check validated configuration and aliases,',
+                'as well as next configuration(s) to be applied.',
+                '',
+                'Example usage:',
+                '  loose show',
+            ]
+        ),
         parents=[common_options],
         add_help=False,
     )
@@ -193,15 +202,17 @@ def get_parser(print_help: bool) -> argparse.Namespace:
         'generate',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         help='Generate a sample configuration file',
-        description='\n'.join([
-            'Generate a sample configuration file.',
-            '',
-            'Useful to pipe it into config location and start as a template.',
-            '',
-            'Example usages:',
-            '  loose generate',
-            '  loose generate > ~/.config/loose/config.yaml',
-        ]),
+        description='\n'.join(
+            [
+                'Generate a sample configuration file.',
+                '',
+                'Useful to pipe it into config location and start as a template.',
+                '',
+                'Example usages:',
+                '  loose generate',
+                '  loose generate > ~/.config/loose/config.yaml',
+            ]
+        ),
         parents=[common_options],
         add_help=False,
     )
@@ -230,7 +241,10 @@ def get_parser(print_help: bool) -> argparse.Namespace:
 def enforce_python_version():
     # 3.7+ because of the ordered dicts
     # 3.10+ because of xdg-base-dirs
-    if sys.version_info.major != PY_MAJOR_VERSION or sys.version_info.minor < PY_MINOR_VERSION:
+    if (
+        sys.version_info.major != PY_MAJOR_VERSION
+        or sys.version_info.minor < PY_MINOR_VERSION
+    ):
         print("This script requires Python 3.7 or later.")
         sys.exit(1)
 
@@ -284,7 +298,9 @@ def assert_unique_primary(data):
     """Asserts that there is only one primary screen for each config section"""
     for screen_count, config_list in data['on_screen_count'].items():
         for single_config in config_list:
-            primary_count = sum(1 for _, config in single_config.items() if config.get('primary', False))
+            primary_count = sum(
+                1 for _, config in single_config.items() if config.get('primary', False)
+            )
             if primary_count > 1:
                 raise ValueError(
                     f'Multiple "primary" entries found within the same '
@@ -331,6 +347,7 @@ def has_loops(on_screen_config) -> Tuple[bool, str]:
 
     Credit: ChatGPT4 (No way in hell I can write this myself)
     """
+
     # Function to build graph from configuration and check for loops
     def build_graph_and_check_loops(screens):
         # Create an adjacency list to represent the graph
@@ -352,7 +369,10 @@ def has_loops(on_screen_config) -> Tuple[bool, str]:
         def dfs(node_id, graph, visited, rec_stack):
             # If the node is in the recursion stack, a loop is detected
             if node_id in rec_stack:
-                return True, "There are objects referring to each other within same config section"
+                return (
+                    True,
+                    "There are objects referring to each other within same config section",
+                )
             # If the node was already visited, skip it
             if node_id in visited:
                 return False, ""
@@ -467,7 +487,7 @@ def replace_aliases_with_real_names(
             real_name = find_real_device_name(
                 alias=alias,
                 connected_devices=main_dict['connected_devices'],
-                logger=logger
+                logger=logger,
             )
         else:
             real_name = alias
@@ -475,8 +495,12 @@ def replace_aliases_with_real_names(
 
         # There might also be positioning directives, we have to replace them too
         for key, value in config.items():
-            if key in ['left-of', 'right-of', 'above', 'below'] and value.startswith('_'):
-                interim_config[real_name][key] = find_real_device_name(value, main_dict['connected_devices'], logger)
+            if key in ['left-of', 'right-of', 'above', 'below'] and value.startswith(
+                '_'
+            ):
+                interim_config[real_name][key] = find_real_device_name(
+                    value, main_dict['connected_devices'], logger
+                )
         replaced_config.update(interim_config)
 
     return replaced_config
@@ -535,13 +559,17 @@ def apply_xrandr_command(
 
     # Turn off the disconnected screens
     for disconnected in [
-        x['device_name'] for x in main_dict['screens'][0]['devices'] if not x['is_connected']
+        x['device_name']
+        for x in main_dict['screens'][0]['devices']
+        if not x['is_connected']
     ]:
         xrandr_command.extend(['--output', disconnected, '--off'])
 
     # Turn off connected but unused screens
     for connected in [
-        x['device_name'] for x in main_dict['screens'][0]['devices'] if x['is_connected']
+        x['device_name']
+        for x in main_dict['screens'][0]['devices']
+        if x['is_connected']
     ]:
         if connected not in replaced_config:
             xrandr_command.extend(['--output', connected, '--off'])
@@ -552,10 +580,7 @@ def apply_xrandr_command(
                 logger.info(f'DRY RUN: Would run pre-hook: {hook}')
             else:
                 logger.info(f'Running pre-hook: {hook}')
-                pre_result = run_command(
-                    command=hook,
-                    logger=logger
-                )
+                pre_result = run_command(command=hook, logger=logger)
                 if pre_result != 0:
                     logger.error(f'Pre-hook "{hook}" failed! Continuing anyway...')
 
@@ -579,10 +604,7 @@ def apply_xrandr_command(
                 logger.info(f'DRY RUN: Would run post-hook: {hook}')
             else:
                 logger.info(f'Running post-hook: {hook}')
-                post_result = run_command(
-                    command=hook,
-                    logger=logger
-                )
+                post_result = run_command(command=hook, logger=logger)
                 if post_result != 0:
                     logger.error(f'Post-hook "{hook}" failed! Continuing anyway...')
 
@@ -621,7 +643,9 @@ def clear_impossible_configs(main_dict: Dict, logger: logging.Logger) -> Dict:
                         if device_name == device['device_name']:
                             # Maybe just removed because of another disconnected device
                             if config in main_dict['active_config']:
-                                logger.debug(f'Ignoring config "{config}" since device "{device_name}" is not connected')
+                                logger.debug(
+                                    f'Ignoring config "{config}" since device "{device_name}" is not connected'
+                                )
                                 main_dict['active_config'].remove(config)
 
     for config in main_dict['active_config']:
@@ -629,10 +653,15 @@ def clear_impossible_configs(main_dict: Dict, logger: logging.Logger) -> Dict:
             if device == 'hooks':
                 # This is a special key, ignore it
                 continue
-            if not device.startswith('_') and device not in main_dict['connected_devices']:
+            if (
+                not device.startswith('_')
+                and device not in main_dict['connected_devices']
+            ):
                 # Maybe just removed because of another nonexistent device
                 if config in main_dict['active_config']:
-                    logger.debug(f'Ignoring config "{config}" because of missing device "{device}"')
+                    logger.debug(
+                        f'Ignoring config "{config}" because of missing device "{device}"'
+                    )
                     main_dict['active_config'].remove(config)
 
     return main_dict
@@ -673,7 +702,9 @@ def assign_aliases(main_dict: Dict, logger: logging.Logger) -> Dict:
                 needed_x, needed_y = None, None
                 # If there is no resolution defined in config, that means we can use any resolution, nice
                 if 'resolution' in section[device]:
-                    needed_x, needed_y = (int(x) for x in section[device]['resolution'].split('x'))
+                    needed_x, needed_y = (
+                        int(x) for x in section[device]['resolution'].split('x')
+                    )
                 # Also check for supported frequencies
                 needed_frequency = None
                 if 'frequency' in section[device]:
@@ -681,21 +712,31 @@ def assign_aliases(main_dict: Dict, logger: logging.Logger) -> Dict:
 
                 # Now validate if there is a required resolution and/or frequency
                 if needed_x and not any(
-                    mode['resolution_width'] == needed_x and mode['resolution_height'] == needed_y for mode in properties['modes']
+                    mode['resolution_width'] == needed_x
+                    and mode['resolution_height'] == needed_y
+                    for mode in properties['modes']
                 ):
-                    logger.debug(f'Config "{section}" is not applicable to device "{device}" due to resolution mismatch')
+                    logger.debug(
+                        f'Config "{section}" is not applicable to device "{device}" due to resolution mismatch'
+                    )
                     main_dict['active_config'].remove(section)
                     continue
                 if needed_frequency and not any(
-                    frequency['frequency'] == needed_frequency for mode in properties['modes'] for frequency in mode['frequencies']
+                    frequency['frequency'] == needed_frequency
+                    for mode in properties['modes']
+                    for frequency in mode['frequencies']
                 ):
-                    logger.debug(f'Config "{section}" is not applicable to device "{device}" due to frequency mismatch')
+                    logger.debug(
+                        f'Config "{section}" is not applicable to device "{device}" due to frequency mismatch'
+                    )
                     main_dict['active_config'].remove(section)
                     continue
 
                 # Re-check if any applicable configs left
                 if any(device in d for d in main_dict['active_config']):
-                    logger.debug(f'Assigning device definition "{device}" to device "{device}"')
+                    logger.debug(
+                        f'Assigning device definition "{device}" to device "{device}"'
+                    )
                     connected_devices[device]['aliases'].append(device)
                     unassigned_aliases.remove(device)
 
@@ -719,7 +760,9 @@ def assign_aliases(main_dict: Dict, logger: logging.Logger) -> Dict:
                     # On first loop we will only handle devices without any aliases
                     continue
                 # Test aliases by order to see if the resolutions are applicable
-                logger.debug(f'Checking compatibility of "{alias}" for device "{device}"')
+                logger.debug(
+                    f'Checking compatibility of "{alias}" for device "{device}"'
+                )
 
                 mismatch = False
                 for section in main_dict['active_config']:
@@ -730,7 +773,9 @@ def assign_aliases(main_dict: Dict, logger: logging.Logger) -> Dict:
                     needed_x, needed_y = None, None
                     # If there is no resolution defined in config, that means we can use any resolution, nice
                     if 'resolution' in section[alias]:
-                        needed_x, needed_y = (int(x) for x in section[alias]['resolution'].split('x'))
+                        needed_x, needed_y = (
+                            int(x) for x in section[alias]['resolution'].split('x')
+                        )
                     # Also check for supported frequencies
                     needed_frequency = None
                     if 'frequency' in section[alias]:
@@ -738,15 +783,23 @@ def assign_aliases(main_dict: Dict, logger: logging.Logger) -> Dict:
 
                     # Now validate if there is a required resolution and/or frequency
                     if needed_x and not any(
-                        mode['resolution_width'] == needed_x and mode['resolution_height'] == needed_y for mode in properties['modes']
+                        mode['resolution_width'] == needed_x
+                        and mode['resolution_height'] == needed_y
+                        for mode in properties['modes']
                     ):
-                        logger.debug(f'Config "{section}" is not applicable to device "{device}" due to resolution mismatch')
+                        logger.debug(
+                            f'Config "{section}" is not applicable to device "{device}" due to resolution mismatch'
+                        )
                         mismatch = True
                         continue
                     if needed_frequency and not any(
-                        frequency['frequency'] == needed_frequency for mode in properties['modes'] for frequency in mode['frequencies']
+                        frequency['frequency'] == needed_frequency
+                        for mode in properties['modes']
+                        for frequency in mode['frequencies']
                     ):
-                        logger.debug(f'Config "{section}" is not applicable to device "{device}" due to frequency mismatch')
+                        logger.debug(
+                            f'Config "{section}" is not applicable to device "{device}" due to frequency mismatch'
+                        )
                         mismatch = True
                         continue
 
@@ -760,7 +813,9 @@ def assign_aliases(main_dict: Dict, logger: logging.Logger) -> Dict:
                 break
 
     for device, properties in main_dict['connected_devices'].items():
-        logger.info(f'Determined aliases for device "{device}": {", ".join(properties["aliases"])}')
+        logger.info(
+            f'Determined aliases for device "{device}": {", ".join(properties["aliases"])}'
+        )
 
     return main_dict
 
@@ -770,7 +825,6 @@ def sanitize_config(
     config_to_convert: Dict,
     logger: logging.Logger,
 ) -> Dict:
-
     # First replace the aliases with the real device names
     sanitized_reference_config = replace_aliases_with_real_names(
         main_dict=main_dict,
@@ -823,11 +877,15 @@ def get_next_config(
             logger.debug('Reset requested, applying the first config')
             return config
         if 'is_current' in config:
-            next_config = active_config[(active_config.index(config) + 1) % len(active_config)]
+            next_config = active_config[
+                (active_config.index(config) + 1) % len(active_config)
+            ]
             logger.debug(f'Rotating to the next config: {next_config}')
             return next_config
 
-    logger.debug(f'No active configuration found, applying the first config: {active_config[0]}')
+    logger.debug(
+        f'No active configuration found, applying the first config: {active_config[0]}'
+    )
 
     return active_config[0]
 
@@ -852,7 +910,9 @@ def get_active_config(
             'Applying global failback directive.'
         )
         if 'global_failback' not in config:
-            logger.error('Can\'t even find global_failback directive in the config, exiting!')
+            logger.error(
+                'Can\'t even find global_failback directive in the config, exiting!'
+            )
             exit(1)
         apply_xrandr_command(
             main_dict=main_dict,
@@ -890,7 +950,7 @@ def rotate(
                 main_dict=main_dict,
                 save_path=save_file,
                 logger=logger,
-                current_config=next_config
+                current_config=next_config,
             )
     else:
         logger.error('Failed to apply the config, exiting!')
@@ -905,7 +965,7 @@ def show(
     """Pretty-prints the current config to stdout"""
     print('Currently active config:')
     print()
-    print('-' * round(get_terminal_size().columns/3))
+    print('-' * round(get_terminal_size().columns / 3))
 
     for conf in main_dict['active_config']:
         current = False
@@ -921,27 +981,31 @@ def show(
             print('👉 ', end='')
         else:
             print('  ', end='')
-        print(dump(
-            converted_config,
-            default_flow_style=False,
-            indent=7,
-        ))
-        print('-' * round(get_terminal_size().columns/3))
+        print(
+            dump(
+                converted_config,
+                default_flow_style=False,
+                indent=7,
+            )
+        )
+        print('-' * round(get_terminal_size().columns / 3))
 
     if 'global_failback' in config:
-        print('-' * round(get_terminal_size().columns/3))
+        print('-' * round(get_terminal_size().columns / 3))
         print('Global failback directive:')
         print()
-        print(dump(
-            replace_aliases_with_real_names(
-                main_dict=main_dict,
-                config_to_convert=config['global_failback'],
-                logger=logger,
-            ),
-            default_flow_style=False,
-            indent=7,
-        ))
-        print('-' * round(get_terminal_size().columns/3))
+        print(
+            dump(
+                replace_aliases_with_real_names(
+                    main_dict=main_dict,
+                    config_to_convert=config['global_failback'],
+                    logger=logger,
+                ),
+                default_flow_style=False,
+                indent=7,
+            )
+        )
+        print('-' * round(get_terminal_size().columns / 3))
 
 
 def fresh_start(
@@ -1026,7 +1090,9 @@ def main():
             logger.debug('Devices match with previously saved data')
             if 'raw_config' in previous_dict and previous_dict['raw_config'] == config:
                 if args.command == 'rotate' and args.ensure:
-                    logger.info('Ensure flag is set & no changes detected, exiting peacefully')
+                    logger.info(
+                        'Ensure flag is set & no changes detected, exiting peacefully'
+                    )
                     exit(0)
                 logger.debug('Config also match with previously saved data, using it')
                 main_dict = previous_dict
