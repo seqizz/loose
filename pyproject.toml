@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "loose"
-version = "0.1.3"
+version = "0.1.4"
 description = "A simple tool to apply XrandR configurations"
 authors = ["Gürkan <gitoperations@gurkan.in>"]
 
