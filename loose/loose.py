@@ -245,7 +245,7 @@ def enforce_python_version():
         sys.version_info.major != PY_MAJOR_VERSION
         or sys.version_info.minor < PY_MINOR_VERSION
     ):
-        print("This script requires Python 3.7 or later.")
+        print(f'This script requires Python {PY_MAJOR_VERSION}.{PY_MINOR_VERSION}+')
         sys.exit(1)
 
 
