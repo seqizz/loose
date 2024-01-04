@@ -45,7 +45,7 @@ PY_MINOR_VERSION = 10
 RUN_TIMEOUT_SEC = 30  # In case of a stuck process
 # Can't believe I don't have a portable way to do get the real version
 # Poetry™ bullshit, has to be synced with pyproject.toml
-VERSION = '0.1.4'
+VERSION = '0.1.5'
 
 
 def get_identifiers(xrandr_output) -> Dict:
@@ -738,7 +738,8 @@ def assign_aliases(main_dict: Dict, logger: logging.Logger) -> Dict:
                         f'Assigning device definition "{device}" to device "{device}"'
                     )
                     connected_devices[device]['aliases'].append(device)
-                    unassigned_aliases.remove(device)
+                    if device in unassigned_aliases:
+                        unassigned_aliases.remove(device)
 
     # Now handling actual aliases
     # Warning: Crappy hack time!
@@ -809,7 +810,8 @@ def assign_aliases(main_dict: Dict, logger: logging.Logger) -> Dict:
                 # This alias is applicable, at least one of the configs can be applied
                 logger.debug(f'Assigning alias "{alias}" to device "{device}"')
                 connected_devices[device]['aliases'].append(alias)
-                unassigned_aliases.remove(alias)
+                if device in unassigned_aliases:
+                    unassigned_aliases.remove(alias)
                 break
 
     for device, properties in main_dict['connected_devices'].items():
