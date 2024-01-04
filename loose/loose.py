@@ -738,8 +738,8 @@ def assign_aliases(main_dict: Dict, logger: logging.Logger) -> Dict:
                         f'Assigning device definition "{device}" to device "{device}"'
                     )
                     connected_devices[device]['aliases'].append(device)
-                    if device in unassigned_aliases:
-                        unassigned_aliases.remove(device)
+                    unassigned_aliases.remove(device)
+                    break
 
     # Now handling actual aliases
     # Warning: Crappy hack time!
@@ -810,8 +810,7 @@ def assign_aliases(main_dict: Dict, logger: logging.Logger) -> Dict:
                 # This alias is applicable, at least one of the configs can be applied
                 logger.debug(f'Assigning alias "{alias}" to device "{device}"')
                 connected_devices[device]['aliases'].append(alias)
-                if device in unassigned_aliases:
-                    unassigned_aliases.remove(alias)
+                unassigned_aliases.remove(alias)
                 break
 
     for device, properties in main_dict['connected_devices'].items():
