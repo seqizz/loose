@@ -1,45 +1,29 @@
 #!/usr/bin/env python3
 
 import argparse
-import jc
 import logging
 import pickle
-import sys
 import subprocess
-import yamale
-from importlib.util import find_spec
-from shutil import which
-from re import compile
-from copy import deepcopy
+import sys
 from collections import defaultdict
-from os import (
-    get_terminal_size,
-    environ,
-)
-from os.path import (
-    dirname,
-    abspath,
-    join as path_join,
-)
+from copy import deepcopy
+from importlib.util import find_spec
+from os import environ, get_terminal_size
+from os.path import abspath, dirname
+from os.path import join as path_join
 from pathlib import Path
 from pprint import pprint
-from typing import (
-    Dict,
-    List,
-    Tuple,
-)
-from xdg_base_dirs import (
-    xdg_state_home,
-    xdg_config_home,
-)
-from yaml import safe_load, dump
-from pyedid import (
-    parse_edid,
-    get_edid_from_xrandr_verbose,
-)
+from re import compile
+from shutil import which
+from typing import Dict, List, Tuple
 
+import jc
+import yamale
+from pyedid import get_edid_from_xrandr_verbose, parse_edid
+from xdg_base_dirs import xdg_config_home, xdg_state_home
+from yaml import dump, safe_load
 
-CONFIG_FILE = f'{xdg_config_home()}/loose/config.yaml'
+DEFAULT_CONFIG_FILE = f'{xdg_config_home()}/loose/config.yaml'
 PY_MAJOR_VERSION = 3
 PY_MINOR_VERSION = 10
 RUN_TIMEOUT_SEC = 30  # In case of a stuck process
@@ -80,7 +64,14 @@ def run_command(
     command: str,
     logger: logging.Logger,
 ) -> int:
-    """Runs given command and returns the return code"""
+    """ Runs given command and returns the return code
+
+    :param command: The command to run
+    :param logger: The logger object
+
+    :return: The return code of the command
+
+    """
 
     try:
         result = subprocess.run(
@@ -108,9 +99,25 @@ def run_command(
     return result.returncode
 
 
+class MyFormatter(
+    argparse.RawTextHelpFormatter,
+    argparse.RawDescriptionHelpFormatter,
+):
+    # Small hack to make use both formatters at the same time
+    pass
+
+
 def get_parser(print_help: bool) -> argparse.Namespace:
+    """ Returns the argument parser object
+
+    :param print_help: Whether to print help and early exit
+
+    :return: The argument parser object
+    """
+
     parser = argparse.ArgumentParser(
-        formatter_class=argparse.RawDescriptionHelpFormatter,
+        # formatter_class=argparse.RawDescriptionHelpFormatter,
+        formatter_class=MyFormatter,
         description='\n'.join(
             [
                 'Welcome to loose 🫠',
@@ -134,6 +141,18 @@ def get_parser(print_help: bool) -> argparse.Namespace:
         '--version',
         action='store_true',
         help='Print version and exit',
+    )
+    parser.add_argument(
+        '-c',
+        '--config',
+        type=str,
+        help='\n'.join(
+            [
+                'Location of the config file',
+                f'(Defaults to {DEFAULT_CONFIG_FILE})',
+            ]
+        ),
+        default=DEFAULT_CONFIG_FILE,
     )
     sub = parser.add_subparsers(dest='command')
     common_options = argparse.ArgumentParser()
@@ -245,7 +264,9 @@ def enforce_python_version():
         sys.version_info.major != PY_MAJOR_VERSION
         or sys.version_info.minor < PY_MINOR_VERSION
     ):
-        print(f'This script requires Python {PY_MAJOR_VERSION}.{PY_MINOR_VERSION}+')
+        print(
+            f'This script requires Python {PY_MAJOR_VERSION}.{PY_MINOR_VERSION}+'
+        )
         sys.exit(1)
 
 
@@ -299,7 +320,9 @@ def assert_unique_primary(data):
     for screen_count, config_list in data['on_screen_count'].items():
         for single_config in config_list:
             primary_count = sum(
-                1 for _, config in single_config.items() if config.get('primary', False)
+                1
+                for _, config in single_config.items()
+                if config.get('primary', False)
             )
             if primary_count > 1:
                 raise ValueError(
@@ -309,10 +332,19 @@ def assert_unique_primary(data):
                 )
 
 
-def validate_config(config: Dict, logger: logging.Logger):
-    """Validates the config file"""
+def validate_config(
+    config_dict: Dict, config_file: str, logger: logging.Logger
+) -> None:
+    """Validates the config file
 
-    loop_fail, message = has_loops(config['on_screen_count'])
+    We use yamale for schema validation, but we also have to check for loops
+
+    :param config: The config dictionary
+    :param config_file: The config file path
+    :param logger: The logger object
+    """
+
+    loop_fail, message = has_loops(config_dict['on_screen_count'])
     if loop_fail:
         logger.error(
             'Config file has loops, please remember we don\'t allow '
@@ -327,10 +359,10 @@ def validate_config(config: Dict, logger: logging.Logger):
     schema_file = path_join(current_folder, 'config_schema.yaml')
 
     schema = yamale.make_schema(schema_file)
-    data = yamale.make_data(CONFIG_FILE)
+    data = yamale.make_data(config_file)
     try:
         yamale.validate(schema, data)
-        assert_unique_primary(config)
+        assert_unique_primary(config_dict)
         logger.debug('Validation of configuration successful.')
     except Exception as e:
         logger.error('Validation of configuration failed. Details:')
@@ -361,7 +393,10 @@ def has_loops(on_screen_config) -> Tuple[bool, str]:
                     # Check for self-reference
                     if ref_id == screen_id:
                         # Return True for loop detected and a message
-                        return True, 'There is a self-reference to screen object itself'
+                        return (
+                            True,
+                            'There is a self-reference to screen object itself',
+                        )
                     # Add a directed edge from current screen to referenced screen
                     graph[screen_id].append(ref_id)
 
@@ -407,7 +442,9 @@ def has_loops(on_screen_config) -> Tuple[bool, str]:
     for _, screens_list in on_screen_config.items():
         for _, screen_section in enumerate(screens_list):
             # Ensure the section items are dictionaries before processing
-            screens = {k: v for k, v in screen_section.items() if isinstance(v, dict)}
+            screens = {
+                k: v for k, v in screen_section.items() if isinstance(v, dict)
+            }
             # Use the helper function to check for loops in the current section
             has_loop, message = build_graph_and_check_loops(screens)
             if has_loop:
@@ -426,12 +463,12 @@ def _replace_none_with_dict(d):
             d[k] = {}
 
 
-def read_config() -> Dict:
+def read_config(config_file: str) -> Dict:
     try:
-        with open(f'{CONFIG_FILE}') as file_stream:
+        with open(f'{config_file}') as file_stream:
             config = safe_load(file_stream)
     except FileNotFoundError:
-        print(f'Config file not found at: {CONFIG_FILE} !')
+        print(f'Config file not found at: {config_file} !')
         exit(1)
 
     assert isinstance(config, dict)
@@ -495,9 +532,12 @@ def replace_aliases_with_real_names(
 
         # There might also be positioning directives, we have to replace them too
         for key, value in config.items():
-            if key in ['left-of', 'right-of', 'above', 'below'] and value.startswith(
-                '_'
-            ):
+            if key in [
+                'left-of',
+                'right-of',
+                'above',
+                'below',
+            ] and value.startswith('_'):
                 interim_config[real_name][key] = find_real_device_name(
                     value, main_dict['connected_devices'], logger
                 )
@@ -582,7 +622,9 @@ def apply_xrandr_command(
                 logger.info(f'Running pre-hook: {hook}')
                 pre_result = run_command(command=hook, logger=logger)
                 if pre_result != 0:
-                    logger.error(f'Pre-hook "{hook}" failed! Continuing anyway...')
+                    logger.error(
+                        f'Pre-hook "{hook}" failed! Continuing anyway...'
+                    )
 
     if dry_run:
         logger.info(f'DRY RUN: Would run command: {" ".join(xrandr_command)}')
@@ -606,7 +648,9 @@ def apply_xrandr_command(
                 logger.info(f'Running post-hook: {hook}')
                 post_result = run_command(command=hook, logger=logger)
                 if post_result != 0:
-                    logger.error(f'Post-hook "{hook}" failed! Continuing anyway...')
+                    logger.error(
+                        f'Post-hook "{hook}" failed! Continuing anyway...'
+                    )
 
     return True
 
@@ -775,7 +819,8 @@ def assign_aliases(main_dict: Dict, logger: logging.Logger) -> Dict:
                     # If there is no resolution defined in config, that means we can use any resolution, nice
                     if 'resolution' in section[alias]:
                         needed_x, needed_y = (
-                            int(x) for x in section[alias]['resolution'].split('x')
+                            int(x)
+                            for x in section[alias]['resolution'].split('x')
                         )
                     # Also check for supported frequencies
                     needed_frequency = None
@@ -1047,7 +1092,7 @@ def main():
     enforce_python_version()
     args = get_parser(print_help=True if len(sys.argv) == 1 else False)
 
-    config = read_config()
+    config = read_config(config_file=args.config)
 
     # Ensure our state folder exists
     save_path = path_join(Path(xdg_state_home(), 'loose'))
@@ -1056,7 +1101,7 @@ def main():
     save_file = path_join(save_path, 'loose.statefile')
     logger = get_logger(verbose=args.verbose)
 
-    validate_config(config=config, logger=logger)
+    validate_config(config_dict=config, config_file=args.config, logger=logger)
 
     # First check if we have a saved state and they match with connected devices
     # We rely on product_id's from EDID, they are supposed to be unique
@@ -1082,23 +1127,33 @@ def main():
     try:
         previous_dict = load_from_disk(save_file)
         # If loose itself is updated, we will start from scratch
-        if 'VERSION' not in previous_dict or previous_dict['VERSION'] != VERSION:
+        if (
+            'VERSION' not in previous_dict
+            or previous_dict['VERSION'] != VERSION
+        ):
             logger.info('Config version mismatch. Scraping the old config.')
             raise FileNotFoundError
         # Compare loaded xrandr output with the current one
         # If they don't have same device hash, we will start from scratch
         elif previous_dict['identifiers'] == identifiers:
             logger.debug('Devices match with previously saved data')
-            if 'raw_config' in previous_dict and previous_dict['raw_config'] == config:
+            if (
+                'raw_config' in previous_dict
+                and previous_dict['raw_config'] == config
+            ):
                 if args.command == 'rotate' and args.ensure:
                     logger.info(
                         'Ensure flag is set & no changes detected, exiting peacefully'
                     )
                     exit(0)
-                logger.debug('Config also match with previously saved data, using it')
+                logger.debug(
+                    'Config also match with previously saved data, using it'
+                )
                 main_dict = previous_dict
             else:
-                logger.info('Config changed since last save, scraping the old config.')
+                logger.info(
+                    'Config changed since last save, scraping the old config.'
+                )
                 raise FileNotFoundError
         else:
             logger.info(
