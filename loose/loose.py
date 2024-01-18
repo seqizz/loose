@@ -863,6 +863,15 @@ def assign_aliases(main_dict: Dict, logger: logging.Logger) -> Dict:
             f'Determined aliases for device "{device}": {", ".join(properties["aliases"])}'
         )
 
+    # Remove all configs from active config which has still-unassigned aliases
+    for alias in unassigned_aliases:
+        for config in main_dict['active_config']:
+            if alias in config:
+                logger.debug(
+                    f'Config "{config}" has an alias which could not be assigned to any device, removing it!'
+                )
+                main_dict['active_config'].remove(config)
+
     return main_dict
 
 
@@ -910,7 +919,6 @@ def _compare_with_empty_values(
 
 def get_next_config(
     active_config: List,
-    reset: bool,
     logger: logging.Logger,
 ) -> Dict:
     """Get the xrandr output, return the next config in the list"""
@@ -919,9 +927,6 @@ def get_next_config(
     # If there isn't, apply the first one
 
     for config in active_config:
-        if reset:
-            logger.debug('Reset requested, applying the first config')
-            return config
         if 'is_current' in config:
             next_config = active_config[
                 (active_config.index(config) + 1) % len(active_config)
@@ -941,6 +946,37 @@ def _print_and_exit(anyobject):
     exit(0)
 
 
+def apply_global_failback(
+    main_dict: Dict,
+    config: Dict,
+    logger: logging.Logger,
+    dry_run: bool,
+):
+    """Applies the global failback directive
+
+    Meant to be called when there is no possible config found to apply
+    """
+    logger.warning(
+        f'{"Would apply" if dry_run else "Applying"} global failback directive.'
+    )
+    if 'global_failback' not in config:
+        logger.error(
+            'Can\'t even find global_failback directive in the config, '
+            f'{"would exit" if dry_run else "exiting"}!'
+        )
+        exit(bool(not dry_run))
+
+    # Can't even check the return of this, what are we going to do, exit? 😒
+    apply_xrandr_command(
+        main_dict=main_dict,
+        config_to_apply=config['global_failback'],
+        logger=logger,
+        dry_run=dry_run,
+    )
+
+    # Failback implies error
+    exit(bool(not dry_run))
+
 def get_active_config(
     main_dict: Dict,
     config: Dict,
@@ -951,18 +987,10 @@ def get_active_config(
     """Returns the active config for the current screen count"""
 
     if connected_count not in config['on_screen_count']:
-        logger.warning(
-            f'No config found for {connected_count} screens! '
-            'Applying global failback directive.'
-        )
-        if 'global_failback' not in config:
-            logger.error(
-                'Can\'t even find global_failback directive in the config, exiting!'
-            )
-            exit(1)
-        apply_xrandr_command(
+        logger.warning(f'No config found for {connected_count} screens!')
+        apply_global_failback(
             main_dict=main_dict,
-            config_to_apply=config['global_failback'],
+            config=config,
             logger=logger,
             dry_run=dry_run,
         )
@@ -980,7 +1008,6 @@ def rotate(
     logger.debug('Got request to rotate.')
     next_config = get_next_config(
         active_config=main_dict['active_config'],
-        reset=args.reset,
         logger=logger,
     )
     run_result = apply_xrandr_command(
@@ -1075,6 +1102,16 @@ def fresh_start(
     )
     main_dict = assign_aliases(main_dict=main_dict, logger=logger)
 
+    # Quick sanity check, if there is no active config, we can't continue
+    if len(main_dict['active_config']) == 0:
+        logger.error('No active config can be determined with current rules!')
+        apply_global_failback(
+            main_dict=main_dict,
+            config=config,
+            logger=logger,
+            dry_run=args.dry_run,
+        )
+
     main_dict['VERSION'] = VERSION
     main_dict['identifiers'] = identifiers
 
@@ -1125,6 +1162,10 @@ def main():
             )
 
     try:
+        # First check if reset flag is set
+        if args.reset:
+            logger.info('Reset flag is set, disregarding previous config.')
+            raise FileNotFoundError
         previous_dict = load_from_disk(save_file)
         # If loose itself is updated, we will start from scratch
         if (
