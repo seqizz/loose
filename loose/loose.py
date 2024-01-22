@@ -29,7 +29,7 @@ PY_MINOR_VERSION = 10
 RUN_TIMEOUT_SEC = 30  # In case of a stuck process
 # Can't believe I don't have a portable way to do get the real version
 # Poetry™ bullshit, has to be synced with pyproject.toml
-VERSION = '0.1.5'
+VERSION = '0.1.9'
 
 
 def get_identifiers(xrandr_output) -> Dict:
