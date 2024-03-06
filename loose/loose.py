@@ -29,7 +29,7 @@ PY_MINOR_VERSION = 10
 RUN_TIMEOUT_SEC = 30  # In case of a stuck process
 # Can't believe I don't have a portable way to do get the real version
 # Poetry™ bullshit, has to be synced with pyproject.toml
-VERSION = '0.1.9'
+VERSION = '0.1.10'
 
 
 def get_identifiers(xrandr_output) -> Dict:
@@ -1163,7 +1163,7 @@ def main():
 
     try:
         # First check if reset flag is set
-        if args.reset:
+        if args.command == 'rotate' and args.reset:
             logger.info('Reset flag is set, disregarding previous config.')
             raise FileNotFoundError
         previous_dict = load_from_disk(save_file)
