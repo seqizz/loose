@@ -721,7 +721,7 @@ def assign_aliases(main_dict: Dict, logger: logging.Logger) -> Dict:
         for device in screen['devices']:
             if device['is_connected']:
                 connected_devices[device['device_name']] = {
-                    'modes': device['modes'],
+                    'resolution_modes': device['resolution_modes'],
                     'aliases': [],
                 }
 
@@ -758,7 +758,7 @@ def assign_aliases(main_dict: Dict, logger: logging.Logger) -> Dict:
                 if needed_x and not any(
                     mode['resolution_width'] == needed_x
                     and mode['resolution_height'] == needed_y
-                    for mode in properties['modes']
+                    for mode in properties['resolution_modes']
                 ):
                     logger.debug(
                         f'Config "{section}" is not applicable to device "{device}" due to resolution mismatch'
@@ -767,7 +767,7 @@ def assign_aliases(main_dict: Dict, logger: logging.Logger) -> Dict:
                     continue
                 if needed_frequency and not any(
                     frequency['frequency'] == needed_frequency
-                    for mode in properties['modes']
+                    for mode in properties['resolution_modes']
                     for frequency in mode['frequencies']
                 ):
                     logger.debug(
@@ -831,7 +831,7 @@ def assign_aliases(main_dict: Dict, logger: logging.Logger) -> Dict:
                     if needed_x and not any(
                         mode['resolution_width'] == needed_x
                         and mode['resolution_height'] == needed_y
-                        for mode in properties['modes']
+                        for mode in properties['resolution_modes']
                     ):
                         logger.debug(
                             f'Config "{section}" is not applicable to device "{device}" due to resolution mismatch'
@@ -840,7 +840,7 @@ def assign_aliases(main_dict: Dict, logger: logging.Logger) -> Dict:
                         continue
                     if needed_frequency and not any(
                         frequency['frequency'] == needed_frequency
-                        for mode in properties['modes']
+                        for mode in properties['resolution_modes']
                         for frequency in mode['frequencies']
                     ):
                         logger.debug(
