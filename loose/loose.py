@@ -9,8 +9,7 @@ from collections import defaultdict
 from copy import deepcopy
 from importlib.util import find_spec
 from os import environ, get_terminal_size
-from os.path import abspath, dirname
-from os.path import join as path_join
+from os.path import abspath, dirname, join as path_join
 from pathlib import Path
 from pprint import pprint
 from re import compile
@@ -46,7 +45,9 @@ def get_identifiers(xrandr_output) -> Dict:
     # Active monitors will have a pattern like "connected primary 1920x1080+0+0"
     # We are using regex sadly, but it is to not run another external command
     # and be faster
-    active_monitor_pattern = compile(r" connected (primary )?\d+x\d+\+\d+\+\d+")
+    active_monitor_pattern = compile(
+        r' connected (primary )?\d+x\d+\+\d+\+\d+'
+    )
 
     active_monitor_count = 0
 
@@ -64,7 +65,7 @@ def run_command(
     command: str,
     logger: logging.Logger,
 ) -> int:
-    """ Runs given command and returns the return code
+    """Runs given command and returns the return code
 
     :param command: The command to run
     :param logger: The logger object
@@ -108,7 +109,7 @@ class MyFormatter(
 
 
 def get_parser(print_help: bool) -> argparse.Namespace:
-    """ Returns the argument parser object
+    """Returns the argument parser object
 
     :param print_help: Whether to print help and early exit
 
@@ -347,7 +348,7 @@ def validate_config(
     loop_fail, message = has_loops(config_dict['on_screen_count'])
     if loop_fail:
         logger.error(
-            'Config file has loops, please remember we don\'t allow '
+            "Config file has loops, please remember we don't allow "
             '"below/above/left-of/right-of" definitions bi-directionally '
             'between screens (or self-references). Your detected issue was:\n\n'
             f'{message}'
@@ -406,11 +407,11 @@ def has_loops(on_screen_config) -> Tuple[bool, str]:
             if node_id in rec_stack:
                 return (
                     True,
-                    "There are objects referring to each other within same config section",
+                    'There are objects referring to each other within same config section',
                 )
             # If the node was already visited, skip it
             if node_id in visited:
-                return False, ""
+                return False, ''
             # Mark the node as visited and add to recursion stack
             visited.add(node_id)
             rec_stack.add(node_id)
@@ -422,7 +423,7 @@ def has_loops(on_screen_config) -> Tuple[bool, str]:
                     return True, message
             # Remove the current node from recursion stack after DFS completes
             rec_stack.remove(node_id)
-            return False, ""
+            return False, ''
 
         # Sets to keep track of visited nodes and the recursion stack
         visited, rec_stack = set(), set()
@@ -436,7 +437,7 @@ def has_loops(on_screen_config) -> Tuple[bool, str]:
                     # If a loop is found, return True and the accompanying message
                     return True, message.format(config=node_id)
         # If no loops are found in the graph, return False with an empty message
-        return False, ""
+        return False, ''
 
     # Iterate over each screen configuration index and the corresponding sections
     for _, screens_list in on_screen_config.items():
@@ -452,7 +453,7 @@ def has_loops(on_screen_config) -> Tuple[bool, str]:
                 return True, message
 
     # Return False and an empty message if no loops are found in any configuration
-    return False, ""
+    return False, ''
 
 
 def _replace_none_with_dict(d):
@@ -519,7 +520,7 @@ def replace_aliases_with_real_names(
         if alias == 'hooks':
             replaced_config[alias] = config
             continue
-        elif alias.startswith('_'):
+        if alias.startswith('_'):
             # This is an alias, replace it with the actual device name
             real_name = find_real_device_name(
                 alias=alias,
@@ -659,7 +660,7 @@ def get_logger(verbose: bool):
     """Creates and returns logger from logging lib"""
 
     logger = logging.getLogger('loose')
-    formatter = logging.Formatter("%(message)s")
+    formatter = logging.Formatter('%(message)s')
     console_handler = logging.StreamHandler()
     if verbose:
         console_handler.setLevel(logging.DEBUG)
@@ -747,7 +748,8 @@ def assign_aliases(main_dict: Dict, logger: logging.Logger) -> Dict:
                 # If there is no resolution defined in config, that means we can use any resolution, nice
                 if 'resolution' in section[device]:
                     needed_x, needed_y = (
-                        int(x) for x in section[device]['resolution'].split('x')
+                        int(x)
+                        for x in section[device]['resolution'].split('x')
                     )
                 # Also check for supported frequencies
                 needed_frequency = None
@@ -977,6 +979,7 @@ def apply_global_failback(
     # Failback implies error
     exit(bool(not dry_run))
 
+
 def get_active_config(
     main_dict: Dict,
     config: Dict,
@@ -1176,7 +1179,7 @@ def main():
             raise FileNotFoundError
         # Compare loaded xrandr output with the current one
         # If they don't have same device hash, we will start from scratch
-        elif previous_dict['identifiers'] == identifiers:
+        if previous_dict['identifiers'] == identifiers:
             logger.debug('Devices match with previously saved data')
             if (
                 'raw_config' in previous_dict
@@ -1199,6 +1202,9 @@ def main():
         else:
             logger.info(
                 'Config mismatch due to (dis)connected and/or (de)activated devices. Scraping the old config.'
+            )
+            logger.debug(
+                f'Previous: {previous_dict["identifiers"]}, Current: {identifiers}'
             )
             raise FileNotFoundError
     except FileNotFoundError:
