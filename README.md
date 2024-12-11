@@ -2,11 +2,9 @@
 
 ![dall-e is stupid as hell](https://paste.gurkan.in/merry-impala.com-resize.jpg)
 
-This is a helper tool to apply vague Xrandr configurations
+This is a helper tool to apply vague Xrandr configurations.
 
-> This is still an alpha software, use at your own risk. I am planning to add some features and polish it a bit more before recommending it.
-
-### Why?
+### Use case (or why I wrote this)
 (Warning: Includes rant)
 
 I wrote this as a reaction to all other xrandr automation tools which requires you to exactly define your setup (e.g. which monitor has which damn fingerprint, what input name it has etc.) and then failing to set up, since you plugged a cable on a different port.
@@ -36,7 +34,8 @@ I highly recommend checking the [example config](loose/example_config.yaml) for 
 
 ### Installation (What installation?)
 
-Since I am using NixOS, I will be using this with dark magic. Instructions for other distros are welcome, since this tool will be maximally useful if it is installed system-wide and triggered by udev automatically.
+Since I am using NixOS, I am using this with dark magic ([systemd service](https://git.gurkan.in/gurkan/nixos-system-flake/src/commit/914d4f0ae730780c5240befa3bb9b746c46dc1ad/home-manager/lib/xserver.nix#L18), [udev rules](https://git.gurkan.in/gurkan/nixos-system-flake/src/commit/914d4f0ae730780c5240befa3bb9b746c46dc1ad/nixos/lib/laptop/loose.nix#L8)).
+Instructions for other distros are welcome, since I don't have enough incentive to write them (plus this tool is only really useful if it's integrated with udev).
 
 For the testing/development purposes, you can use poetry:
 - Clone this repo
@@ -45,4 +44,4 @@ For the testing/development purposes, you can use poetry:
 
 ### TODO
 
-Todo is tracked on my [issues](https://git.gurkan.in/gurkan/loose/issues) page.
+Todo is tracked on my [issues](https://git.gurkan.in/gurkan/loose/issues) page. Although I am a happy user of my own solution, this is more like a wishlist :)
