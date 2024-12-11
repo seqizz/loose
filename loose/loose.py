@@ -1176,7 +1176,7 @@ def main():
             raise FileNotFoundError
         # Compare loaded xrandr output with the current one
         # If they don't have same device hash, we will start from scratch
-        elif previous_dict['identifiers'] == identifiers:
+        if previous_dict['identifiers'] == identifiers:
             logger.debug('Devices match with previously saved data')
             if (
                 'raw_config' in previous_dict
@@ -1200,6 +1200,7 @@ def main():
             logger.info(
                 'Config mismatch due to (dis)connected and/or (de)activated devices. Scraping the old config.'
             )
+            logger.info(f'Previous: {previous_dict["identifiers"]}, Current: {identifiers}')
             raise FileNotFoundError
     except FileNotFoundError:
         main_dict = None
