@@ -14,7 +14,6 @@ from pathlib import Path
 from pprint import pprint
 from re import compile
 from shutil import which
-from typing import Dict, List, Tuple
 
 import jc
 import yamale
@@ -31,7 +30,7 @@ RUN_TIMEOUT_SEC = 30  # In case of a stuck process
 VERSION = '0.1.10'
 
 
-def get_identifiers(xrandr_output) -> Dict:
+def get_identifiers(xrandr_output) -> dict:
     """Returns a dict with EDID product_id's of the connected devices and active monitor count
 
     It is used to check if the saved state is still valid
@@ -272,7 +271,7 @@ def enforce_python_version():
 
 
 def save_to_disk(
-    main_dict: Dict,
+    main_dict: dict,
     save_path: str,
     logger: logging.Logger,
     current_config=None,
@@ -303,7 +302,7 @@ def load_from_disk(filename):
     return loaded_data
 
 
-def parse_xrandr() -> Dict:
+def parse_xrandr() -> dict:
     """Parses the output of xrandr command and returns as dictionary"""
 
     outta = subprocess.check_output('xrandr', text=True)
@@ -334,7 +333,7 @@ def assert_unique_primary(data):
 
 
 def validate_config(
-    config_dict: Dict, config_file: str, logger: logging.Logger
+    config_dict: dict, config_file: str, logger: logging.Logger
 ) -> None:
     """Validates the config file
 
@@ -371,7 +370,7 @@ def validate_config(
         exit(1)
 
 
-def has_loops(on_screen_config) -> Tuple[bool, str]:
+def has_loops(on_screen_config) -> tuple[bool, str]:
     """Detects whether there is a loop in the graph, for position references
 
     We don't allow:
@@ -464,7 +463,7 @@ def _replace_none_with_dict(d):
             d[k] = {}
 
 
-def read_config(config_file: str) -> Dict:
+def read_config(config_file: str) -> dict:
     try:
         with open(f'{config_file}') as file_stream:
             config = safe_load(file_stream)
@@ -489,7 +488,7 @@ def read_config(config_file: str) -> Dict:
 
 def find_real_device_name(
     alias: str,
-    connected_devices: Dict,
+    connected_devices: dict,
     logger: logging.Logger,
 ) -> str:
     """Returns the real device name for the given alias"""
@@ -503,10 +502,10 @@ def find_real_device_name(
 
 
 def replace_aliases_with_real_names(
-    main_dict: Dict,
-    config_to_convert: Dict,
+    main_dict: dict,
+    config_to_convert: dict,
     logger: logging.Logger,
-) -> Dict:
+) -> dict:
     """Replaces the aliases in the config with the real device names"""
     replaced_config = {}
 
@@ -548,8 +547,8 @@ def replace_aliases_with_real_names(
 
 
 def apply_xrandr_command(
-    main_dict: Dict,
-    config_to_apply: Dict,
+    main_dict: dict,
+    config_to_apply: dict,
     logger: logging.Logger,
     dry_run: bool,
 ) -> bool:
@@ -672,7 +671,7 @@ def get_logger(verbose: bool):
     return logger
 
 
-def clear_impossible_configs(main_dict: Dict, logger: logging.Logger) -> Dict:
+def clear_impossible_configs(main_dict: dict, logger: logging.Logger) -> dict:
     """Removes the configs that are impossible to apply"""
 
     temp_dict_screens = main_dict['screens'].copy()
@@ -712,7 +711,7 @@ def clear_impossible_configs(main_dict: Dict, logger: logging.Logger) -> Dict:
     return main_dict
 
 
-def assign_aliases(main_dict: Dict, logger: logging.Logger) -> Dict:
+def assign_aliases(main_dict: dict, logger: logging.Logger) -> dict:
     """Assigns given aliases to the screens in the xrandr output"""
 
     # First get all connected device names, we will use them as a reference
@@ -877,52 +876,10 @@ def assign_aliases(main_dict: Dict, logger: logging.Logger) -> Dict:
     return main_dict
 
 
-def sanitize_config(
-    main_dict: Dict,
-    config_to_convert: Dict,
-    logger: logging.Logger,
-) -> Dict:
-    # First replace the aliases with the real device names
-    sanitized_reference_config = replace_aliases_with_real_names(
-        main_dict=main_dict,
-        config_to_convert=config_to_convert,
-        logger=logger,
-    )
-
-    # Then add the implicit values if they are not defined
-    for device, config in sanitized_reference_config.items():
-        if 'rotate' not in config:
-            sanitized_reference_config[device]['rotate'] = 'normal'
-        if 'primary' not in config:
-            sanitized_reference_config[device]['primary'] = False
-
-    if 'hooks' in sanitized_reference_config:
-        # We don't care about hooks here, remove them
-        del sanitized_reference_config['hooks']
-
-    return sanitized_reference_config
-
-
-def _compare_with_empty_values(
-    sanitized_current_state: Dict,
-    sanitized_reference_config: Dict,
-) -> bool:
-    # What matters is the reference config, if there are more items in current state, it's fine
-    for device, config in sanitized_reference_config.items():
-        if device not in sanitized_current_state:
-            return False
-        for key, value in config.items():
-            if key not in sanitized_current_state[device]:
-                return False
-            if sanitized_current_state[device][key] != value:
-                return False
-    return True
-
-
 def get_next_config(
-    active_config: List,
+    active_config: list,
     logger: logging.Logger,
-) -> Dict:
+) -> dict:
     """Get the xrandr output, return the next config in the list"""
     # Check if there is a currently applied config
     # If there is, rotate to the next one
@@ -943,14 +900,15 @@ def get_next_config(
     return active_config[0]
 
 
+# Used for debugging purposes, sometimes
 def _print_and_exit(anyobject):
     pprint(anyobject, width=1)
     exit(0)
 
 
 def apply_global_failback(
-    main_dict: Dict,
-    config: Dict,
+    main_dict: dict,
+    config: dict,
     logger: logging.Logger,
     dry_run: bool,
 ):
@@ -981,12 +939,12 @@ def apply_global_failback(
 
 
 def get_active_config(
-    main_dict: Dict,
-    config: Dict,
+    main_dict: dict,
+    config: dict,
     connected_count: int,
     logger: logging.Logger,
     dry_run: bool,
-) -> Tuple[int, Dict]:
+) -> tuple[int, dict]:
     """Returns the active config for the current screen count"""
 
     if connected_count not in config['on_screen_count']:
@@ -1002,7 +960,7 @@ def get_active_config(
 
 
 def rotate(
-    main_dict: Dict,
+    main_dict: dict,
     args: argparse.Namespace,
     save_file: str,
     logger: logging.Logger,
@@ -1034,8 +992,8 @@ def rotate(
 
 
 def show(
-    main_dict: Dict,
-    config: Dict,
+    main_dict: dict,
+    config: dict,
     logger: logging.Logger,
 ):
     """Pretty-prints the current config to stdout"""
@@ -1086,11 +1044,11 @@ def show(
 
 def fresh_start(
     args: argparse.Namespace,
-    config: Dict,
+    config: dict,
     save_file: str,
-    identifiers: Dict,
+    identifiers: dict,
     logger: logging.Logger,
-) -> Dict:
+) -> dict:
     """Creates a fresh state file in case of a new config or new devices"""
 
     main_dict = parse_xrandr()
@@ -1146,6 +1104,7 @@ def main():
     # First check if we have a saved state and they match with connected devices
     # We rely on product_id's from EDID, they are supposed to be unique
     randr = subprocess.check_output(['xrandr', '--verbose'])
+
     identifiers = get_identifiers(randr)
 
     logger.info(
