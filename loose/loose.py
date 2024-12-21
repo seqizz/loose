@@ -6,14 +6,22 @@ import pickle
 import subprocess
 import sys
 from collections import defaultdict
+from contextlib import contextmanager
 from copy import deepcopy
 from importlib.util import find_spec
-from os import environ, get_terminal_size
-from os.path import abspath, dirname, join as path_join
+from os import environ, get_terminal_size, remove
+from os.path import (
+    abspath,
+    dirname,
+    exists,
+    getmtime,
+    join as path_join,
+)
 from pathlib import Path
 from pprint import pprint
 from re import compile
 from shutil import which
+from time import sleep, time
 
 import jc
 import yamale
@@ -27,7 +35,7 @@ PY_MINOR_VERSION = 10
 RUN_TIMEOUT_SEC = 30  # In case of a stuck process
 # Can't believe I don't have a portable way to do get the real version
 # Poetry™ bullshit, has to be synced with pyproject.toml
-VERSION = '0.1.10'
+VERSION = '0.2.0'
 
 
 def get_identifiers(xrandr_output) -> dict:
@@ -1086,15 +1094,40 @@ def fresh_start(
     return main_dict
 
 
-def main():
+@contextmanager
+def acquire_lock(
+    lock_dir: str,
+    lock_name: str,
+    stale_sec: int = 40,
+):
+    lock_file = path_join(lock_dir, f'{lock_name}.lock')
+
+    try:
+        # Check for stale lock
+        if exists(lock_file):
+            if time() - getmtime(lock_file) > stale_sec:
+                remove(lock_file)
+            else:
+                # Lock file is not stale, exit peacefully
+                exit(0)
+
+        # Create lock file
+        with open(lock_file, 'w') as f:
+            f.write(str(time()))
+
+        yield
+
+    finally:
+        # Clean up lock file
+        if exists(lock_file):
+            remove(lock_file)
+
+
+def main(save_path: str):
     enforce_python_version()
     args = get_parser(print_help=True if len(sys.argv) == 1 else False)
 
     config = read_config(config_file=args.config)
-
-    # Ensure our state folder exists
-    save_path = path_join(Path(xdg_state_home(), 'loose'))
-    Path(save_path).mkdir(parents=True, exist_ok=True)
 
     save_file = path_join(save_path, 'loose.statefile')
     logger = get_logger(verbose=args.verbose)
@@ -1105,6 +1138,9 @@ def main():
     # We rely on product_id's from EDID, they are supposed to be unique
     randr = subprocess.check_output(['xrandr', '--verbose'])
 
+    # We will sleep a bit to let hardware settle down
+    # (e.g. when you plug-in a dock, it takes a bit to recognize multiple screens etc.)
+    sleep(2)
     identifiers = get_identifiers(randr)
 
     logger.info(
@@ -1193,5 +1229,16 @@ def main():
         )
 
 
+def main_wrapper():
+    """Just a dumb wrapper to satisfy the poetry entry point"""
+
+    # Ensure our state folder exists
+    save_path = path_join(Path(xdg_state_home(), 'loose'))
+    Path(save_path).mkdir(parents=True, exist_ok=True)
+
+    with acquire_lock(lock_dir=save_path, lock_name='loose'):
+        main(save_path=save_path)
+
+
 if __name__ == '__main__':
-    main()
+    main_wrapper()
