@@ -9,17 +9,20 @@ from collections import defaultdict
 from copy import deepcopy
 from importlib.util import find_spec
 from os import environ, get_terminal_size
-from os.path import abspath, dirname
-from os.path import join as path_join
+from os.path import (
+    abspath,
+    dirname,
+    exists,
+    join as path_join,
+)
 from pathlib import Path
 from pprint import pprint
-from re import compile
 from shutil import which
-from typing import Dict, List, Tuple
+from time import sleep
 
 import jc
 import yamale
-from pyedid import get_edid_from_xrandr_verbose, parse_edid
+from filelock import FileLock, Timeout
 from xdg_base_dirs import xdg_config_home, xdg_state_home
 from yaml import dump, safe_load
 
@@ -29,42 +32,60 @@ PY_MINOR_VERSION = 10
 RUN_TIMEOUT_SEC = 30  # In case of a stuck process
 # Can't believe I don't have a portable way to do get the real version
 # Poetry™ bullshit, has to be synced with pyproject.toml
-VERSION = '0.1.10'
+VERSION = '0.2.3'
 
 
-def get_identifiers(xrandr_output) -> Dict:
-    """Returns a dict with EDID product_id's of the connected devices and active monitor count
+def build_main_dict(config: dict) -> dict:
+    xrandr_output = parse_xrandr()
+    main_dict = {'identifiers': []}
+    active_devices = []
 
-    It is used to check if the saved state is still valid
-    """
+    # First pass to get active devices
+    for screen in xrandr_output['screens']:
+        for device in screen['devices']:
+            for resolution in device['resolution_modes']:
+                for frequency in resolution['frequencies']:
+                    if frequency['is_current']:
+                        active_devices.append(device['device_name'])
 
-    edid_list = get_edid_from_xrandr_verbose(xrandr_output)
-    product_ids = [parse_edid(device).product_id for device in edid_list]
+    # Get full device information including EDIDs
+    parsed_props_xrandr = parse_xrandr(props=True)
+    for screen in parsed_props_xrandr['screens']:
+        for device in screen['devices']:
+            if device['is_connected']:
+                # Get resolution modes from original xrandr output
+                resolution_modes = next(
+                    (
+                        d['resolution_modes']
+                        for s in xrandr_output['screens']
+                        for d in s['devices']
+                        if d['device_name'] == device['device_name']
+                    ),
+                    [],
+                )
 
-    decoded_randr = xrandr_output.decode('utf-8').splitlines()
+                device_info = {
+                    'device_name': device['device_name'],
+                    'product_id': device['props']['EdidModel']['product_id'],
+                    'is_active': device['device_name'] in active_devices,
+                    'is_connected': device['is_connected'],
+                    'resolution_modes': resolution_modes,
+                }
+                main_dict['identifiers'].append(device_info)
 
-    # Active monitors will have a pattern like "connected primary 1920x1080+0+0"
-    # We are using regex sadly, but it is to not run another external command
-    # and be faster
-    active_monitor_pattern = compile(r" connected (primary )?\d+x\d+\+\d+\+\d+")
+    # Sort identifiers by product_id for consistency
+    main_dict['identifiers'].sort(key=lambda x: x['product_id'])
+    main_dict['VERSION'] = VERSION
+    main_dict['raw_config'] = deepcopy(config)
 
-    active_monitor_count = 0
-
-    for line in decoded_randr:
-        if active_monitor_pattern.search(line):
-            active_monitor_count += 1
-
-    return {
-        'ids': sorted(product_ids),
-        'active_count': active_monitor_count,
-    }
+    return main_dict
 
 
 def run_command(
     command: str,
     logger: logging.Logger,
 ) -> int:
-    """ Runs given command and returns the return code
+    """Runs given command and returns the return code
 
     :param command: The command to run
     :param logger: The logger object
@@ -108,7 +129,7 @@ class MyFormatter(
 
 
 def get_parser(print_help: bool) -> argparse.Namespace:
-    """ Returns the argument parser object
+    """Returns the argument parser object
 
     :param print_help: Whether to print help and early exit
 
@@ -116,7 +137,6 @@ def get_parser(print_help: bool) -> argparse.Namespace:
     """
 
     parser = argparse.ArgumentParser(
-        # formatter_class=argparse.RawDescriptionHelpFormatter,
         formatter_class=MyFormatter,
         description='\n'.join(
             [
@@ -167,6 +187,12 @@ def get_parser(print_help: bool) -> argparse.Namespace:
         '--verbose',
         action='store_true',
         help='Print debug messages to stdout also',
+    )
+    common_options.add_argument(
+        '-d',
+        '--dump-state',
+        action='store_true',
+        help='Dump saved state (if any) to stdout and exit',
     )
     rotate_parser = sub.add_parser(
         'rotate',
@@ -271,41 +297,47 @@ def enforce_python_version():
 
 
 def save_to_disk(
-    main_dict: Dict,
-    save_path: str,
+    applied_config: dict,
+    full_config: dict,
     logger: logging.Logger,
-    current_config=None,
+    old_dict: dict,
+    save_path: str,
 ):
     # Save the dictionary to a file using pickle
-    if current_config is not None:
-        for config in main_dict['active_config']:
-            if 'is_current' in config and config['is_current']:
-                if config != current_config:
-                    # Remove the current tag from the old config
-                    del config['is_current']
-            if config == current_config:
-                config['is_current'] = True
+    config_rotation = deepcopy(old_dict['active_config'])
+    for config in config_rotation:
+        if 'is_current' in config and config['is_current']:
+            if config != applied_config:
+                # Remove the current tag from the old config
+                del config['is_current']
+        if config == applied_config:
+            config['is_current'] = True
 
-    if current_config is None:
-        logger.debug('Saving initial config to disk')
-    else:
-        logger.debug('Saving new active config to disk')
+    new_dict = build_main_dict(config=full_config)
+    new_dict['active_config'] = config_rotation
+
+    logger.debug('Saving new active config to disk')
 
     with open(save_path, 'wb') as file:
-        pickle.dump(main_dict, file)
+        pickle.dump(new_dict, file)
 
 
 def load_from_disk(filename):
     # Load the dictionary from the pickle file
+    # First check if it exists
+    if not exists(filename):
+        return None
     with open(filename, 'rb') as file:
-        loaded_data = pickle.load(file)
-    return loaded_data
+        return pickle.load(file)
 
 
-def parse_xrandr() -> Dict:
+def parse_xrandr(props: bool = False) -> dict:
     """Parses the output of xrandr command and returns as dictionary"""
 
-    outta = subprocess.check_output('xrandr', text=True)
+    command = ['xrandr']
+    if props:
+        command.append('--properties')
+    outta = subprocess.check_output(command, text=True)
 
     # It was horror trying to parse that ^bull(?:l+)?shit$ with regex myself
     # Kudos to jc: https://github.com/kellyjonbrazil/jc
@@ -333,7 +365,7 @@ def assert_unique_primary(data):
 
 
 def validate_config(
-    config_dict: Dict, config_file: str, logger: logging.Logger
+    config_dict: dict, config_file: str, logger: logging.Logger
 ) -> None:
     """Validates the config file
 
@@ -344,17 +376,18 @@ def validate_config(
     :param logger: The logger object
     """
 
+    # Check for logical loops in the config
     loop_fail, message = has_loops(config_dict['on_screen_count'])
     if loop_fail:
         logger.error(
-            'Config file has loops, please remember we don\'t allow '
+            "Config file has loops, please remember we don't allow "
             '"below/above/left-of/right-of" definitions bi-directionally '
             'between screens (or self-references). Your detected issue was:\n\n'
             f'{message}'
         )
         exit(1)
 
-    # Validate the data against the schema
+    # Validate the data against the correct schema
     current_folder = dirname(abspath(__file__))
     schema_file = path_join(current_folder, 'config_schema.yaml')
 
@@ -370,7 +403,7 @@ def validate_config(
         exit(1)
 
 
-def has_loops(on_screen_config) -> Tuple[bool, str]:
+def has_loops(on_screen_config) -> tuple[bool, str]:
     """Detects whether there is a loop in the graph, for position references
 
     We don't allow:
@@ -406,11 +439,11 @@ def has_loops(on_screen_config) -> Tuple[bool, str]:
             if node_id in rec_stack:
                 return (
                     True,
-                    "There are objects referring to each other within same config section",
+                    'There are objects referring to each other within same config section',
                 )
             # If the node was already visited, skip it
             if node_id in visited:
-                return False, ""
+                return False, ''
             # Mark the node as visited and add to recursion stack
             visited.add(node_id)
             rec_stack.add(node_id)
@@ -422,7 +455,7 @@ def has_loops(on_screen_config) -> Tuple[bool, str]:
                     return True, message
             # Remove the current node from recursion stack after DFS completes
             rec_stack.remove(node_id)
-            return False, ""
+            return False, ''
 
         # Sets to keep track of visited nodes and the recursion stack
         visited, rec_stack = set(), set()
@@ -436,7 +469,7 @@ def has_loops(on_screen_config) -> Tuple[bool, str]:
                     # If a loop is found, return True and the accompanying message
                     return True, message.format(config=node_id)
         # If no loops are found in the graph, return False with an empty message
-        return False, ""
+        return False, ''
 
     # Iterate over each screen configuration index and the corresponding sections
     for _, screens_list in on_screen_config.items():
@@ -452,10 +485,11 @@ def has_loops(on_screen_config) -> Tuple[bool, str]:
                 return True, message
 
     # Return False and an empty message if no loops are found in any configuration
-    return False, ""
+    return False, ''
 
 
 def _replace_none_with_dict(d):
+    """Replaces None values with empty dicts in a nested dictionary"""
     for k, v in d.items():
         if isinstance(v, dict):  # If the item is a dict, recurse into it
             _replace_none_with_dict(v)
@@ -463,7 +497,7 @@ def _replace_none_with_dict(d):
             d[k] = {}
 
 
-def read_config(config_file: str) -> Dict:
+def read_config(config_file: str) -> dict:
     try:
         with open(f'{config_file}') as file_stream:
             config = safe_load(file_stream)
@@ -488,7 +522,7 @@ def read_config(config_file: str) -> Dict:
 
 def find_real_device_name(
     alias: str,
-    connected_devices: Dict,
+    connected_devices: dict,
     logger: logging.Logger,
 ) -> str:
     """Returns the real device name for the given alias"""
@@ -502,10 +536,10 @@ def find_real_device_name(
 
 
 def replace_aliases_with_real_names(
-    main_dict: Dict,
-    config_to_convert: Dict,
+    main_dict: dict,
+    config_to_convert: dict,
     logger: logging.Logger,
-) -> Dict:
+) -> dict:
     """Replaces the aliases in the config with the real device names"""
     replaced_config = {}
 
@@ -519,7 +553,7 @@ def replace_aliases_with_real_names(
         if alias == 'hooks':
             replaced_config[alias] = config
             continue
-        elif alias.startswith('_'):
+        if alias.startswith('_'):
             # This is an alias, replace it with the actual device name
             real_name = find_real_device_name(
                 alias=alias,
@@ -547,16 +581,17 @@ def replace_aliases_with_real_names(
 
 
 def apply_xrandr_command(
-    main_dict: Dict,
-    config_to_apply: Dict,
+    main_dict: dict,
+    config_to_apply: dict,
     logger: logging.Logger,
     dry_run: bool,
 ) -> bool:
-    """Applies the given config to the xrandr output
+    """Applies the given config to the xrandr output"""
 
-    Returns False only if the xrandr command itself fails
-    we don't care that much about the pre/post hooks
-    """
+    xrandr_binary = which('xrandr')
+    if not xrandr_binary:
+        logger.error('xrandr command could not be found in PATH!')
+        return False
 
     replaced_config = replace_aliases_with_real_names(
         main_dict=main_dict,
@@ -564,17 +599,11 @@ def apply_xrandr_command(
         logger=logger,
     )
 
-    xrandr_binary = which('xrandr')
-    if not xrandr_binary:
-        logger.error('xrandr command could not be found in PATH!')
-        return False
-
     xrandr_command = [xrandr_binary]
     for device, config in replaced_config.items():
         xrandr_command += ['--output', device]
         if 'disabled' in config:
             xrandr_command += ['--off']
-            # We don't care about other options if the device is disabled
             continue
 
         if 'resolution' in config:
@@ -597,20 +626,22 @@ def apply_xrandr_command(
         if 'frequency' in config:
             xrandr_command += ['--rate', str(config['frequency'])]
 
-    # Turn off the disconnected screens
-    for disconnected in [
-        x['device_name']
-        for x in main_dict['screens'][0]['devices']
-        if not x['is_connected']
-    ]:
+    # Explicitly disable disconnected screens
+    disconnected_devices = [
+        device['device_name']
+        for device in main_dict['identifiers']
+        if not device['is_connected']
+    ]
+    for disconnected in disconnected_devices:
         xrandr_command.extend(['--output', disconnected, '--off'])
 
-    # Turn off connected but unused screens
-    for connected in [
-        x['device_name']
-        for x in main_dict['screens'][0]['devices']
-        if x['is_connected']
-    ]:
+    # Turn off connected but unassigned/unused screens
+    connected_devices = [
+        device['device_name']
+        for device in main_dict['identifiers']
+        if device['is_connected']
+    ]
+    for connected in connected_devices:
         if connected not in replaced_config:
             xrandr_command.extend(['--output', connected, '--off'])
 
@@ -618,39 +649,38 @@ def apply_xrandr_command(
         for hook in replaced_config['hooks']['pre']:
             if dry_run:
                 logger.info(f'DRY RUN: Would run pre-hook: {hook}')
-            else:
-                logger.info(f'Running pre-hook: {hook}')
-                pre_result = run_command(command=hook, logger=logger)
-                if pre_result != 0:
-                    logger.error(
-                        f'Pre-hook "{hook}" failed! Continuing anyway...'
-                    )
+                continue
+            logger.info(f'Running pre-hook: {hook}')
+            pre_result = run_command(command=hook, logger=logger)
+            if pre_result != 0:
+                logger.error(f'Pre-hook "{hook}" failed! Continuing anyway...')
 
     if dry_run:
         logger.info(f'DRY RUN: Would run command: {" ".join(xrandr_command)}')
-        logger.debug(f'Config of command: {replaced_config}')
+        logger.debug(f'Config for command: {replaced_config}')
     else:
         logger.info(f'Running command: {" ".join(xrandr_command)}')
-        logger.debug(f'Config of command: {replaced_config}')
+        logger.debug(f'Config for command: {replaced_config}')
         xrandr_result = run_command(
             command=' '.join(xrandr_command),
             logger=logger,
         )
         if xrandr_result != 0:
             logger.error('xrandr command failed!')
+            # Don't continue with post-hooks
             return False
 
     if 'hooks' in replaced_config and 'post' in replaced_config['hooks']:
         for hook in replaced_config['hooks']['post']:
             if dry_run:
                 logger.info(f'DRY RUN: Would run post-hook: {hook}')
-            else:
-                logger.info(f'Running post-hook: {hook}')
-                post_result = run_command(command=hook, logger=logger)
-                if post_result != 0:
-                    logger.error(
-                        f'Post-hook "{hook}" failed! Continuing anyway...'
-                    )
+                continue
+            logger.info(f'Running post-hook: {hook}')
+            post_result = run_command(command=hook, logger=logger)
+            if post_result != 0:
+                logger.error(
+                    f'Post-hook "{hook}" failed! Continuing anyway...'
+                )
 
     return True
 
@@ -659,7 +689,7 @@ def get_logger(verbose: bool):
     """Creates and returns logger from logging lib"""
 
     logger = logging.getLogger('loose')
-    formatter = logging.Formatter("%(message)s")
+    formatter = logging.Formatter('%(message)s')
     console_handler = logging.StreamHandler()
     if verbose:
         console_handler.setLevel(logging.DEBUG)
@@ -671,35 +701,36 @@ def get_logger(verbose: bool):
     return logger
 
 
-def clear_impossible_configs(main_dict: Dict, logger: logging.Logger) -> Dict:
+def clear_impossible_configs(main_dict: dict, logger: logging.Logger) -> dict:
     """Removes the configs that are impossible to apply"""
 
-    temp_dict_screens = main_dict['screens'].copy()
     temp_dict_active_config = main_dict['active_config'].copy()
 
-    # Loop connected screens and find them in the active_config
-    for screen in temp_dict_screens:
-        for device in screen['devices']:
-            # Remove the devices that are not connected
-            if not device['is_connected']:
-                for config in temp_dict_active_config:
-                    for device_name in config:
-                        if device_name == device['device_name']:
-                            # Maybe just removed because of another disconnected device
-                            if config in main_dict['active_config']:
-                                logger.debug(
-                                    f'Ignoring config "{config}" since device "{device_name}" is not connected'
-                                )
-                                main_dict['active_config'].remove(config)
-
-    for config in main_dict['active_config']:
-        for device in config:
-            if device == 'hooks':
-                # This is a special key, ignore it
-                continue
+    # Remove configs for disconnected devices
+    for device in [
+        d for d in main_dict['identifiers'] if not d['is_connected']
+    ]:
+        for config in temp_dict_active_config:
             if (
-                not device.startswith('_')
-                and device not in main_dict['connected_devices']
+                config in main_dict['active_config']
+            ):  # Check if not already removed
+                for device_name in config:
+                    if device_name == device['device_name']:
+                        logger.debug(
+                            f'Ignoring config "{config}" since device "{device_name}" is not connected'
+                        )
+                        main_dict['active_config'].remove(config)
+
+    # Remove configs with non-existent devices
+    connected_device_names = [
+        d['device_name'] for d in main_dict['identifiers']
+    ]
+    for config in main_dict['active_config'].copy():
+        for device in config:
+            if (
+                device != 'hooks'  # Skip hooks section
+                and not device.startswith('_')  # Skip aliases
+                and device not in connected_device_names
             ):
                 # Maybe just removed because of another nonexistent device
                 if config in main_dict['active_config']:
@@ -711,19 +742,15 @@ def clear_impossible_configs(main_dict: Dict, logger: logging.Logger) -> Dict:
     return main_dict
 
 
-def assign_aliases(main_dict: Dict, logger: logging.Logger) -> Dict:
-    """Assigns given aliases to the screens in the xrandr output"""
-
-    # First get all connected device names, we will use them as a reference
-    # while comparing old and new configs. Also we'll assign tokens to them.
+def assign_aliases(main_dict: dict, logger: logging.Logger) -> dict:
+    # Create connected_devices from identifiers
     connected_devices = {}
-    for screen in main_dict['screens']:
-        for device in screen['devices']:
-            if device['is_connected']:
-                connected_devices[device['device_name']] = {
-                    'resolution_modes': device['resolution_modes'],
-                    'aliases': [],
-                }
+    for device_info in main_dict['identifiers']:
+        if device_info['is_connected']:
+            connected_devices[device_info['device_name']] = {
+                'resolution_modes': device_info['resolution_modes'],
+                'aliases': [],
+            }
 
     main_dict['connected_devices'] = connected_devices
 
@@ -747,7 +774,8 @@ def assign_aliases(main_dict: Dict, logger: logging.Logger) -> Dict:
                 # If there is no resolution defined in config, that means we can use any resolution, nice
                 if 'resolution' in section[device]:
                     needed_x, needed_y = (
-                        int(x) for x in section[device]['resolution'].split('x')
+                        int(x)
+                        for x in section[device]['resolution'].split('x')
                     )
                 # Also check for supported frequencies
                 needed_frequency = None
@@ -875,52 +903,10 @@ def assign_aliases(main_dict: Dict, logger: logging.Logger) -> Dict:
     return main_dict
 
 
-def sanitize_config(
-    main_dict: Dict,
-    config_to_convert: Dict,
-    logger: logging.Logger,
-) -> Dict:
-    # First replace the aliases with the real device names
-    sanitized_reference_config = replace_aliases_with_real_names(
-        main_dict=main_dict,
-        config_to_convert=config_to_convert,
-        logger=logger,
-    )
-
-    # Then add the implicit values if they are not defined
-    for device, config in sanitized_reference_config.items():
-        if 'rotate' not in config:
-            sanitized_reference_config[device]['rotate'] = 'normal'
-        if 'primary' not in config:
-            sanitized_reference_config[device]['primary'] = False
-
-    if 'hooks' in sanitized_reference_config:
-        # We don't care about hooks here, remove them
-        del sanitized_reference_config['hooks']
-
-    return sanitized_reference_config
-
-
-def _compare_with_empty_values(
-    sanitized_current_state: Dict,
-    sanitized_reference_config: Dict,
-) -> bool:
-    # What matters is the reference config, if there are more items in current state, it's fine
-    for device, config in sanitized_reference_config.items():
-        if device not in sanitized_current_state:
-            return False
-        for key, value in config.items():
-            if key not in sanitized_current_state[device]:
-                return False
-            if sanitized_current_state[device][key] != value:
-                return False
-    return True
-
-
 def get_next_config(
-    active_config: List,
+    active_config: list,
     logger: logging.Logger,
-) -> Dict:
+) -> dict:
     """Get the xrandr output, return the next config in the list"""
     # Check if there is a currently applied config
     # If there is, rotate to the next one
@@ -941,14 +927,15 @@ def get_next_config(
     return active_config[0]
 
 
+# Used for debugging purposes, sometimes
 def _print_and_exit(anyobject):
     pprint(anyobject, width=1)
     exit(0)
 
 
 def apply_global_failback(
-    main_dict: Dict,
-    config: Dict,
+    main_dict: dict,
+    config: dict,
     logger: logging.Logger,
     dry_run: bool,
 ):
@@ -961,7 +948,7 @@ def apply_global_failback(
     )
     if 'global_failback' not in config:
         logger.error(
-            'Can\'t even find global_failback directive in the config, '
+            "Can't even find global_failback directive in the config, "
             f'{"would exit" if dry_run else "exiting"}!'
         )
         exit(bool(not dry_run))
@@ -977,17 +964,14 @@ def apply_global_failback(
     # Failback implies error
     exit(bool(not dry_run))
 
-def get_active_config(
-    main_dict: Dict,
-    config: Dict,
-    connected_count: int,
-    logger: logging.Logger,
-    dry_run: bool,
-) -> Tuple[int, Dict]:
-    """Returns the active config for the current screen count"""
 
-    if connected_count not in config['on_screen_count']:
-        logger.warning(f'No config found for {connected_count} screens!')
+def get_active_config(
+    main_dict: dict, config: dict, logger: logging.Logger, dry_run: bool
+) -> dict:
+    if len(main_dict['identifiers']) not in config['on_screen_count']:
+        logger.warning(
+            f'No config found for {len(main_dict["identifiers"])} screens!'
+        )
         apply_global_failback(
             main_dict=main_dict,
             config=config,
@@ -995,44 +979,53 @@ def get_active_config(
             dry_run=dry_run,
         )
 
-    return config['on_screen_count'][connected_count]
+    return config['on_screen_count'][len(main_dict['identifiers'])]
 
 
 def rotate(
-    main_dict: Dict,
     args: argparse.Namespace,
-    save_file: str,
+    full_config: dict,
     logger: logging.Logger,
+    main_dict: dict,
+    save_file: str,
 ):
     """Rotates the current config to the next one"""
-    logger.debug('Got request to rotate.')
+    logger.debug(
+        f'Got request to rotate.{" (DRY RUN)" if args.dry_run else ""}'
+    )
+
+    # Find next configuration to apply
     next_config = get_next_config(
         active_config=main_dict['active_config'],
         logger=logger,
     )
+
+    # Apply the next config, shit gets real here, unless dry run is requested
     run_result = apply_xrandr_command(
         main_dict=main_dict,
         config_to_apply=next_config,
         logger=logger,
         dry_run=args.dry_run,
     )
-    if run_result:
-        if not args.dry_run:
-            # Save the state to disk with new current tag
-            save_to_disk(
-                main_dict=main_dict,
-                save_path=save_file,
-                logger=logger,
-                current_config=next_config,
-            )
-    else:
+
+    if not run_result:
         logger.error('Failed to apply the config, exiting!')
         exit(1)
 
+    if not args.dry_run:
+        # Looks like success, save the state to disk with new current tag
+        save_to_disk(
+            applied_config=next_config,
+            full_config=full_config,
+            logger=logger,
+            old_dict=main_dict,
+            save_path=save_file,
+        )
+
 
 def show(
-    main_dict: Dict,
-    config: Dict,
+    main_dict: dict,
+    config: dict,
     logger: logging.Logger,
 ):
     """Pretty-prints the current config to stdout"""
@@ -1083,22 +1076,20 @@ def show(
 
 def fresh_start(
     args: argparse.Namespace,
-    config: Dict,
-    save_file: str,
-    identifiers: Dict,
+    config: dict,
     logger: logging.Logger,
-) -> Dict:
+) -> dict:
     """Creates a fresh state file in case of a new config or new devices"""
 
-    main_dict = parse_xrandr()
-    main_dict['raw_config'] = deepcopy(config)
+    main_dict = build_main_dict(config=config)
 
-    main_dict['active_config'] = get_active_config(
-        main_dict=main_dict,
-        config=config,
-        connected_count=len(identifiers['ids']),
-        logger=logger,
-        dry_run=args.dry_run,
+    main_dict['active_config'] = deepcopy(
+        get_active_config(
+            main_dict=main_dict,
+            config=config,
+            logger=logger,
+            dry_run=args.dry_run,
+        )
     )
     main_dict = assign_aliases(main_dict=main_dict, logger=logger)
 
@@ -1112,113 +1103,116 @@ def fresh_start(
             dry_run=args.dry_run,
         )
 
-    main_dict['VERSION'] = VERSION
-    main_dict['identifiers'] = identifiers
-
-    # And at last, save the state to disk
-    save_to_disk(
-        main_dict=main_dict,
-        save_path=save_file,
-        logger=logger,
-    )
-
     return main_dict
 
 
-def main():
+def main(save_path: str):
+    # First check if the script is run with the correct Python version
     enforce_python_version()
+
+    # Parse the arguments
     args = get_parser(print_help=True if len(sys.argv) == 1 else False)
 
+    # Read the config file, if changed, we will start from scratch
     config = read_config(config_file=args.config)
 
-    # Ensure our state folder exists
-    save_path = path_join(Path(xdg_state_home(), 'loose'))
-    Path(save_path).mkdir(parents=True, exist_ok=True)
-
-    save_file = path_join(save_path, 'loose.statefile')
+    # Get the logger
     logger = get_logger(verbose=args.verbose)
 
+    # Validate the config file
+    # This does schema validation and checks for logical loops in the config
     validate_config(config_dict=config, config_file=args.config, logger=logger)
 
-    # First check if we have a saved state and they match with connected devices
-    # We rely on product_id's from EDID, they are supposed to be unique
-    randr = subprocess.check_output(['xrandr', '--verbose'])
-    identifiers = get_identifiers(randr)
+    # We will sleep a bit to let hardware settle down
+    # (e.g. when you plug-in a dock, it takes a bit to recognize multiple screens etc.)
+    sleep(1)
+
+    # Construct the main dictionary, will use it for comparison
+    new_main_dict = fresh_start(args=args, config=config, logger=logger)
+
+    connected_count = len(new_main_dict['identifiers'])
+    active_count = len(
+        [
+            device
+            for device in new_main_dict['identifiers']
+            if device['is_active']
+        ]
+    )
 
     logger.info(
-        f'Found {len(identifiers["ids"])} connected screen{"" if len(identifiers["ids"]) == 1 else "s"}.'
+        f'Found {connected_count} connected screen'
+        f'{"" if connected_count == 1 else "s"} '
+        f'(active count: {active_count})'
     )
-    # A bit annoying, but we are composing proper sentences here
-    if len(identifiers['ids']) == 1:
-        if identifiers['active_count'] != 1:
-            logger.info('It is somehow.. not active??')
-    else:
-        if identifiers['active_count'] == len(identifiers['ids']):
-            logger.info('All of them are active.')
-        else:
-            logger.info(
-                f'{identifiers["active_count"]} of them '
-                f'{"are" if identifiers["active_count"] > 1 else "is"} active.'
-            )
 
     try:
         # First check if reset flag is set
         if args.command == 'rotate' and args.reset:
-            logger.info('Reset flag is set, disregarding previous config.')
+            logger.info('Reset flag is set, ignoring previous config.')
             raise FileNotFoundError
-        previous_dict = load_from_disk(save_file)
+
+        # Now load the previous state from disk
+        previous_dict = load_from_disk(path_join(save_path, 'loose.statefile'))
+        if args.dump_state:
+            if not previous_dict:
+                logger.error('No previous state found to dump!')
+                exit(1)
+            # Debugging request, print the state and exit
+            _print_and_exit(previous_dict)
+
+        # If no previous state found, we will start from scratch
+        if not previous_dict:
+            logger.info('No previous state found, starting from scratch.')
+            raise FileNotFoundError
         # If loose itself is updated, we will start from scratch
         if (
             'VERSION' not in previous_dict
             or previous_dict['VERSION'] != VERSION
         ):
-            logger.info('Config version mismatch. Scraping the old config.')
+            logger.info('Config version mismatch. Ignoring the old config.')
             raise FileNotFoundError
+
         # Compare loaded xrandr output with the current one
         # If they don't have same device hash, we will start from scratch
-        elif previous_dict['identifiers'] == identifiers:
-            logger.debug('Devices match with previously saved data')
-            if (
-                'raw_config' in previous_dict
-                and previous_dict['raw_config'] == config
-            ):
-                if args.command == 'rotate' and args.ensure:
-                    logger.info(
-                        'Ensure flag is set & no changes detected, exiting peacefully'
-                    )
-                    exit(0)
-                logger.debug(
-                    'Config also match with previously saved data, using it'
-                )
-                main_dict = previous_dict
-            else:
-                logger.info(
-                    'Config changed since last save, scraping the old config.'
-                )
-                raise FileNotFoundError
-        else:
+        if previous_dict['identifiers'] != new_main_dict['identifiers']:
             logger.info(
-                'Config mismatch due to (dis)connected and/or (de)activated devices. Scraping the old config.'
+                'Config mismatch due to (dis)connected and/or (de)activated devices. Ignoring the old config.'
+            )
+            logger.debug(
+                f'Previous: {[d["device_name"] for d in previous_dict["identifiers"]]}, '
+                f'Current: {[d["device_name"] for d in new_main_dict["identifiers"]]}'
             )
             raise FileNotFoundError
-    except FileNotFoundError:
-        main_dict = None
 
-    if main_dict is None:
-        main_dict = fresh_start(
-            args=args,
-            config=config,
-            save_file=save_file,
-            identifiers=identifiers,
-            logger=logger,
-        )
+        logger.debug('Devices match with previously saved identifiers')
+
+        if 'raw_config' not in previous_dict or (
+            previous_dict['raw_config'] != config
+        ):
+            logger.info(
+                'Config changed since last save, ignoring the old config.'
+            )
+            raise FileNotFoundError
+
+        if args.command == 'rotate' and args.ensure:
+            logger.info(
+                'Ensure flag is set & no changes detected, exiting peacefully'
+            )
+            exit(0)
+
+        logger.debug('Config also match with previously saved data, using it')
+        main_dict = previous_dict
+
+    except FileNotFoundError:
+        main_dict = new_main_dict
 
     if args.command == 'rotate':
         rotate(
-            main_dict=main_dict,
             args=args,
-            save_file=save_file,
+            full_config=config,
             logger=logger,
+            main_dict=main_dict,
+            save_file=path_join(save_path, 'loose.statefile'),
         )
     elif args.command == 'show':
         show(
@@ -1228,5 +1222,34 @@ def main():
         )
 
 
+def main_wrapper():
+    """Just a dumb wrapper to satisfy the poetry entry point"""
+
+    # Ensure our state folder exists
+    save_path = path_join(Path(xdg_state_home(), 'loose'))
+    Path(save_path).mkdir(parents=True, exist_ok=True)
+
+    # Simple file lock to prevent multiple instances
+    lock = FileLock(
+        path_join(save_path, 'loose.lock'),
+        timeout=0.1,
+        poll_interval=0.05,
+    )
+
+    try:
+        with lock:
+            main(save_path=save_path)
+    except Timeout:
+        # Another instance is already running, all good
+        logger = get_logger(verbose=False)
+        logger.info('Another instance of loose is already running, skipping.')
+        exit(0)
+    except Exception as e:
+        # Something else, dunno, log it and fail
+        logger = get_logger(verbose=False)
+        logger.error(f'An error occurred: {str(e)}')
+        exit(1)
+
+
 if __name__ == '__main__':
-    main()
+    main_wrapper()
