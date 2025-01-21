@@ -32,7 +32,7 @@ PY_MINOR_VERSION = 10
 RUN_TIMEOUT_SEC = 30  # In case of a stuck process
 # Can't believe I don't have a portable way to do get the real version
 # Poetry™ bullshit, has to be synced with pyproject.toml
-VERSION = '0.2.4'
+VERSION = '0.2.5'
 
 
 def build_main_dict(config: dict) -> dict:
@@ -1191,13 +1191,22 @@ def main(save_path: str):
 
         # Compare loaded xrandr output with the current one
         # If they don't have same device hash, we will start from scratch
-        if previous_dict['identifiers'] != new_main_dict['identifiers']:
+        previously_connected = [
+            f'{x["device_name"]}({x["product_id"]})'
+            for x in previous_dict['identifiers']
+            if x['is_connected']
+        ]
+        currently_connected = [
+            f'{x["device_name"]}({x["product_id"]})'
+            for x in new_main_dict['identifiers']
+            if x['is_connected']
+        ]
+        if previously_connected != currently_connected:
             logger.info(
                 'Config mismatch due to (dis)connected and/or (de)activated devices. Ignoring the old config.'
             )
             logger.debug(
-                f'Previous: {[d["device_name"] for d in previous_dict["identifiers"]]}, '
-                f'Current: {[d["device_name"] for d in new_main_dict["identifiers"]]}'
+                f'Previous: {previously_connected}, Current: {currently_connected}'
             )
             raise FileNotFoundError
 
