@@ -32,7 +32,7 @@ PY_MINOR_VERSION = 10
 RUN_TIMEOUT_SEC = 30  # In case of a stuck process
 # Can't believe I don't have a portable way to do get the real version
 # Poetry™ bullshit, has to be synced with pyproject.toml
-VERSION = '0.2.6'
+VERSION = '0.2.7'
 
 
 def build_main_dict(config: dict) -> dict:
@@ -830,126 +830,235 @@ def _validate_device_compatibility(
 
 
 def assign_aliases(main_dict: dict, logger: logging.Logger) -> dict:
-    # Initialize aliases for all connected devices
+    """
+    Assigns aliases from the config to connected devices based on compatibility
+    and ensures a 1:1 mapping during the assignment process.
+    Filters down main_dict['active_config'] to only include configs
+    whose keys can be mapped 1:1 to the assigned aliases/devices.
+    """
+    connected_devices = [
+        d for d in main_dict['identifiers'] if d['is_connected']
+    ]
+    connected_device_names = {d['device_name'] for d in connected_devices}
+
+    # Clear previous alias assignments in the identifiers list
     for device in main_dict['identifiers']:
         if device['is_connected']:
-            device['aliases'] = []
+            device['aliases'] = []  # Reset aliases list
 
+    # clear_impossible_configs removes configs referencing non-connected explicit device names
+    # It's good to keep this initial filter.
     main_dict = clear_impossible_configs(main_dict=main_dict, logger=logger)
 
-    # Get all remaining aliases
-    unassigned_aliases = []
+    # Get all potential keys (aliases/names) used in the remaining active_config list
+    unassigned_keys_pool = set()
     for item in main_dict['active_config']:
         for key in item.keys():
-            if key not in unassigned_aliases and key != 'hooks':
-                unassigned_aliases.append(key)
+            if key != 'hooks' and key != 'is_current':
+                unassigned_keys_pool.add(key)
 
-    # First assign device names as their own aliases
-    for device in main_dict['identifiers']:
-        if device['is_connected'] and device['aliases'] == []:
-            _assign_single_alias(
-                device,
-                device['device_name'],
-                main_dict,
-                logger,
-                unassigned_aliases,
+    # Track which physical devices have been claimed by a key (explicit name or alias)
+    claimed_devices = set()
+    # Track which keys from the pool have been successfully assigned to a device
+    assigned_keys_from_pool = set()
+
+    logger.debug(
+        f'Potential keys from config pool: {sorted(list(unassigned_keys_pool))}'
+    )
+
+    # Pass 1: Prioritize explicit device names used as keys in config
+    # These keys map directly to a connected device by name. We just need to check compatibility.
+    explicit_device_name_keys = sorted(
+        [k for k in unassigned_keys_pool if k in connected_device_names]
+    )
+    logger.debug(
+        f'Pass 1: Checking explicit device names used in config pool: {explicit_device_name_keys}'
+    )
+
+    for key in explicit_device_name_keys:
+        # Find the device matching this explicit name key
+        device = next(
+            (d for d in connected_devices if d['device_name'] == key), None
+        )
+
+        # Should always find the device if key was in connected_device_names,
+        # and ensure it hasn't been claimed by another explicit name already (unlikely)
+        if device and device['device_name'] not in claimed_devices:
+            # Check compatibility: Does this device match requirements in *any* config section using this key?
+            is_compatible = False
+            for config_item in main_dict['active_config']:
+                if key in config_item:
+                    # Check compatibility of this device against the config section using this key
+                    if _validate_device_compatibility(
+                        device, config_item[key], key, logger
+                    ):
+                        is_compatible = True
+                        break  # Found compatibility
+
+            if is_compatible:
+                logger.debug(
+                    f'Assigning explicit device name "{key}" to device "{device["device_name"]}"'
+                )
+                device['aliases'].append(
+                    key
+                )  # Assign the key as an alias to the device
+                claimed_devices.add(device['device_name'])  # Claim this device
+                assigned_keys_from_pool.add(key)  # Mark this key as assigned
+                # Move to the next explicit name key.
+
+    # Pass 2: Assign _X aliases to remaining unclaimed devices
+    # Sort aliases to give _1 priority over _2 etc.
+    alias_keys = sorted([k for k in unassigned_keys_pool if k.startswith('_')])
+    logger.debug(
+        f'Pass 2: Checking alias keys used in config pool: {alias_keys}'
+    )
+
+    for key in alias_keys:
+        if key in assigned_keys_from_pool:
+            continue  # This alias key has already been assigned
+
+        # Find the first available connected device compatible with this alias key
+        assigned_device = None
+        for device in connected_devices:
+            if device['device_name'] in claimed_devices:
+                continue  # Device already claimed by an explicit name or previous alias
+
+            # Check compatibility: Does this device match requirements in *any* config section using this key?
+            is_compatible = False
+            for config_item in main_dict['active_config']:
+                if key in config_item:
+                    if _validate_device_compatibility(
+                        device, config_item[key], key, logger
+                    ):
+                        is_compatible = True
+                        break  # Found compatibility
+
+            if is_compatible:
+                # This is the first compatible, unclaimed device found for this alias key
+                assigned_device = device
+                break  # Found a device for this alias key, stop checking other devices
+
+        if assigned_device:
+            # Assign this alias key to the found device
+            logger.debug(
+                f'Assigning alias "{key}" to device "{assigned_device["device_name"]}"'
+            )
+            assigned_device['aliases'].append(
+                key
+            )  # Assign the key as an alias
+            claimed_devices.add(
+                assigned_device['device_name']
+            )  # Claim the device
+            assigned_keys_from_pool.add(key)  # Mark the alias key as assigned
+            # Move to the next alias key.
+
+    # --- Filtering applicable configs based on assignment results ---
+    # Keep only the config dictionaries from the original active_config list
+    # where all their required keys (excluding hooks and is_current)
+    # were successfully assigned to unique devices based on the global assignment done above.
+
+    original_active_configs = deepcopy(
+        main_dict['active_config']
+    )  # Work on a copy for filtering
+    main_dict[
+        'active_config'
+    ] = []  # Reset the active_config list to build the filtered list
+
+    logger.debug('Filtering config candidates based on alias assignments')
+    for config_candidate_original in original_active_configs:
+        # Need a temporary dict to work with keys easily, preserving original for the final list
+        config_candidate_keys_only = {
+            k: v
+            for k, v in config_candidate_original.items()
+            if k != 'is_current'
+        }
+
+        required_keys = {
+            k for k in config_candidate_keys_only.keys() if k != 'hooks'
+        }
+
+        # For a candidate config to be applicable, every required_key must be in the assigned_keys_from_pool
+        # AND the devices these keys were assigned to must be unique *within this candidate config*.
+        candidate_claimed_devices_for_mapping = set()
+        is_candidate_applicable = True
+
+        for required_key in required_keys:
+            # Check if the required key was assigned at all during the global assignment phase
+            if required_key not in assigned_keys_from_pool:
+                logger.debug(
+                    f'Config candidate requires key "{required_key}" which was not assigned to any device. Candidate not applicable.'
+                )
+                is_candidate_applicable = False
+                break
+
+            # Find the unique device assigned to this key globally
+            assigned_device = next(
+                (
+                    d
+                    for d in main_dict['identifiers']
+                    if required_key in d.get('aliases', [])
+                ),
+                None,
             )
 
-    # Now handle actual aliases with the same two-pass approach
-    unassigned_aliases_copy = unassigned_aliases.copy()
-    for _ in range(2):
-        if _ == 0:
-            logger.debug('Checking devices without any aliases assigned')
-        else:
-            logger.debug('Checking to spread the remaining aliases')
-        for alias in unassigned_aliases_copy:
-            if alias not in unassigned_aliases:
-                continue
-            for device in main_dict['identifiers']:
-                if not device['is_connected']:
-                    continue
-                if _ == 0 and device['aliases']:
-                    continue
+            # assigned_device should always be found if required_key is in assigned_keys_from_pool, but check for robustness
+            if not assigned_device:
+                logger.warning(
+                    f'Internal logic issue: Key "{required_key}" in assigned_keys_from_pool but no device found with this alias. Candidate not applicable.'
+                )
+                is_candidate_applicable = False
+                break
 
-                if _assign_single_alias(
-                    device, alias, main_dict, logger, unassigned_aliases
-                ):
-                    break
+            # Check if this assigned device is already claimed by another key *within this specific candidate config's requirements*
+            if (
+                assigned_device['device_name']
+                in candidate_claimed_devices_for_mapping
+            ):
+                logger.debug(
+                    f'Config candidate requires key "{required_key}" which maps to device "{assigned_device["device_name"]}", but device is already claimed by another key in this config. Candidate not applicable.'
+                )
+                is_candidate_applicable = False
+                break
 
-    # Log determined aliases
+            # Device is unique for this candidate config's requirements. Claim it for this candidate's mapping check.
+            candidate_claimed_devices_for_mapping.add(
+                assigned_device['device_name']
+            )
+
+        # If the candidate is applicable after checking all its required keys:
+        if is_candidate_applicable:
+            # Add the original config dictionary back to the filtered list.
+            # 'is_current' and other potential non-key fields are preserved.
+            main_dict['active_config'].append(config_candidate_original)
+            logger.debug('Config candidate deemed applicable.')
+
+    # Log determined aliases (these are the global potential assignments based on the 1:1 rule)
+    # This output will now reflect that each device gets at most one _X alias.
     for device in main_dict['identifiers']:
         if device['is_connected']:
             logger.info(
-                f'Determined aliases for device "{device["device_name"]}": {", ".join(device["aliases"])}'
+                f'Determined aliases for device "{device["device_name"]}": {", ".join(device.get("aliases", []))}'
             )
 
-    # Remove configs with unassigned aliases
-    for alias in unassigned_aliases:
-        for config in main_dict['active_config']:
-            if alias in config:
-                logger.debug(
-                    f'Config "{config}" has an alias which could not be assigned to any device, removing it!'
-                )
-                main_dict['active_config'].remove(config)
+    # Log which keys from the initial pool were not assigned globally.
+    # Any config requiring these keys will have been filtered out.
+    all_assigned_aliases = set()
+    for device in main_dict['identifiers']:
+        if device['is_connected']:
+            all_assigned_aliases.update(device.get('aliases', []))
 
-    return main_dict
-
-
-def _assign_single_alias(
-    device: dict,
-    alias: str,
-    main_dict: dict,
-    logger: logging.Logger,
-    unassigned_aliases: list,
-) -> bool:
-    """Assigns a single alias to a device if compatible, returns True if assigned"""
-    # For device names, check if they exist in any config section
-    if alias == device['device_name']:
-        for section in main_dict['active_config']:
-            if device['device_name'] not in section:
-                continue
-
-            # Check compatibility using the extracted function
-            if not _validate_device_compatibility(
-                device,
-                section[device['device_name']],
-                device['device_name'],
-                logger,
-            ):
-                main_dict['active_config'].remove(section)
-                continue
-
-            if any(
-                device['device_name'] in d for d in main_dict['active_config']
-            ):
-                logger.debug(
-                    f'Assigning device definition "{device["device_name"]}" to device "{device["device_name"]}"'
-                )
-                device['aliases'].append(device['device_name'])
-                unassigned_aliases.remove(device['device_name'])
-                return True
-    else:
-        # For aliases, check compatibility across all sections
+    unassigned_keys_after_assignment = (
+        unassigned_keys_pool - all_assigned_aliases
+    )
+    if unassigned_keys_after_assignment:
+        # This is expected if a config uses a key (alias or name), but no compatible device
+        # was available or claimed by a higher priority key during assignment.
+        # Config candidates requiring these keys have already been filtered out.
         logger.debug(
-            f'Checking compatibility of "{alias}" for device "{device["device_name"]}"'
+            f'Keys from config pool that could not be assigned to any device: {sorted(list(unassigned_keys_after_assignment))}'
         )
 
-        for section in main_dict['active_config']:
-            if alias not in section:
-                continue
-            if not _validate_device_compatibility(
-                device, section[alias], alias, logger
-            ):
-                return False
-
-        logger.debug(
-            f'Assigning alias "{alias}" to device "{device["device_name"]}"'
-        )
-        device['aliases'].append(alias)
-        unassigned_aliases.remove(alias)
-        return True
-
-    return False
+    return main_dict  # Return updated main_dict
 
 
 def get_next_config(
