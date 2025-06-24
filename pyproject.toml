@@ -14,8 +14,6 @@ pyedid = "^1.0.3"
 yamale = ">=4.0.4"
 filelock = "^3.16.1"
 
-[tool.poetry.dev-dependencies]
-
 [tool.poetry.group.dev.dependencies]
 shtab = "^1.6.5"
 
