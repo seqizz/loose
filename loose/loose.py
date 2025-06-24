@@ -250,7 +250,7 @@ def get_parser(print_help: bool) -> argparse.Namespace:
         action='store_true',
         help='Only apply changes if connected devices or config changed',
     )
-    rotate_group.add_argument(
+    rotate_parser.add_argument(
         '-i',
         '--ignore-failing-hooks',
         action='store_true',
