@@ -667,43 +667,54 @@ def apply_xrandr_command(
     for device in unconfigured_devices:
         xrandr_command.extend(['--output', device, '--off'])
 
-    if 'hooks' in replaced_config and 'pre' in replaced_config['hooks']:
-        for hook in replaced_config['hooks']['pre']:
-            if dry_run:
-                logger.info(f'DRY RUN: Would run pre-hook: {hook}')
-                continue
-            logger.info(f'Running pre-hook: {hook}')
-            pre_result = run_command(command=hook, logger=logger)
-            if pre_result != 0:
-                logger.error(f'Pre-hook "{hook}" failed! Continuing anyway...')
+    # Execute pre-hooks, xrandr command, and post-hooks
+    if not _execute_hooks(replaced_config, 'pre', logger, dry_run):
+        return False
 
+    if not _execute_xrandr(xrandr_command, replaced_config, logger, dry_run):
+        return False
+
+    _execute_hooks(replaced_config, 'post', logger, dry_run)
+    return True
+
+
+def _execute_hooks(
+    config: dict, hook_type: str, logger: logging.Logger, dry_run: bool
+) -> bool:
+    """Execute pre or post hooks, returns False only for pre-hook failures"""
+    if 'hooks' not in config or hook_type not in config['hooks']:
+        return True
+
+    for hook in config['hooks'][hook_type]:
+        if dry_run:
+            logger.info(f'DRY RUN: Would run {hook_type}-hook: {hook}')
+            continue
+
+        logger.info(f'Running {hook_type}-hook: {hook}')
+        result = run_command(command=hook, logger=logger)
+        if result != 0:
+            logger.error(
+                f'{hook_type.capitalize()}-hook "{hook}" failed! {"Continuing anyway..." if hook_type == "post" else ""}'
+            )
+            if hook_type == 'pre':
+                return False
+    return True
+
+
+def _execute_xrandr(
+    command: list, config: dict, logger: logging.Logger, dry_run: bool
+) -> bool:
+    """Execute the xrandr command"""
     if dry_run:
-        logger.info(f'DRY RUN: Would run command: {" ".join(xrandr_command)}')
-        logger.debug(f'Config for command: {replaced_config}')
-    else:
-        logger.info(f'Running command: {" ".join(xrandr_command)}')
-        logger.debug(f'Config for command: {replaced_config}')
-        xrandr_result = run_command(
-            command=' '.join(xrandr_command),
-            logger=logger,
-        )
-        if xrandr_result != 0:
-            logger.error('xrandr command failed!')
-            # Don't continue with post-hooks
-            return False
-
-    if 'hooks' in replaced_config and 'post' in replaced_config['hooks']:
-        for hook in replaced_config['hooks']['post']:
-            if dry_run:
-                logger.info(f'DRY RUN: Would run post-hook: {hook}')
-                continue
-            logger.info(f'Running post-hook: {hook}')
-            post_result = run_command(command=hook, logger=logger)
-            if post_result != 0:
-                logger.error(
-                    f'Post-hook "{hook}" failed! Continuing anyway...'
-                )
-
+        logger.info(f'DRY RUN: Would run command: {" ".join(command)}')
+        logger.debug(f'Config for command: {config}')
+        return True
+    logger.info(f'Running command: {" ".join(command)}')
+    logger.debug(f'Config for command: {config}')
+    result = run_command(command=' '.join(command), logger=logger)
+    if result != 0:
+        logger.error('xrandr command failed!')
+        return False
     return True
 
 
