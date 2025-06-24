@@ -321,6 +321,35 @@ def enforce_python_version():
         sys.exit(1)
 
 
+def _safe_file_operation(
+    file_path: str, operation: str, logger: logging.Logger, data=None
+):
+    """Safely handle file operations with consistent error handling"""
+    try:
+        if operation == 'read_yaml':
+            with open(file_path) as file_stream:
+                return safe_load(file_stream)
+        elif operation == 'read_text':
+            with open(file_path) as file_stream:
+                return file_stream.read()
+        elif operation == 'write_pickle':
+            with open(file_path, 'wb') as file:
+                pickle.dump(data, file)
+        elif operation == 'read_pickle':
+            if not exists(file_path):
+                return None
+            with open(file_path, 'rb') as file:
+                return pickle.load(file)
+    except FileNotFoundError:
+        if operation == 'read_yaml':
+            logger.error(f'Config file not found at: {file_path} !')
+            exit(1)
+        return None
+    except Exception as e:
+        logger.error(f'Error during {operation} on {file_path}: {str(e)}')
+        return None
+
+
 def save_to_disk(
     applied_config: dict,
     full_config: dict,
@@ -344,18 +373,12 @@ def save_to_disk(
     new_dict['raw_config'] = full_config
 
     logger.debug('Saving new active config to disk')
-
-    with open(save_path, 'wb') as file:
-        pickle.dump(new_dict, file)
+    _safe_file_operation(save_path, 'write_pickle', logger, new_dict)
 
 
-def load_from_disk(filename):
+def load_from_disk(filename: str, logger: logging.Logger):
     # Load the dictionary from the pickle file
-    # First check if it exists
-    if not exists(filename):
-        return None
-    with open(filename, 'rb') as file:
-        return pickle.load(file)
+    return _safe_file_operation(filename, 'read_pickle', logger)
 
 
 def parse_xrandr(props: bool = False) -> dict:
@@ -524,13 +547,8 @@ def _replace_none_with_dict(d):
             d[k] = {}
 
 
-def read_config(config_file: str) -> dict:
-    try:
-        with open(f'{config_file}') as file_stream:
-            config = safe_load(file_stream)
-    except FileNotFoundError:
-        print(f'Config file not found at: {config_file} !')
-        exit(1)
+def read_config(config_file: str, logger: logging.Logger) -> dict:
+    config = _safe_file_operation(config_file, 'read_yaml', logger)
 
     assert isinstance(config, dict)
     if 'on_screen_count' in config:
@@ -718,10 +736,11 @@ def _execute_xrandr(
     return True
 
 
-def get_logger(verbose: bool):
+def get_logger(verbose: bool = False) -> logging.Logger:
     """Creates and returns logger from logging lib"""
 
     logger = logging.getLogger('loose')
+
     formatter = logging.Formatter('%(message)s')
     console_handler = logging.StreamHandler()
     if verbose:
@@ -731,6 +750,7 @@ def get_logger(verbose: bool):
     console_handler.setFormatter(formatter)
     logger.addHandler(console_handler)
     logger.setLevel(logging.DEBUG)
+
     return logger
 
 
@@ -1145,11 +1165,11 @@ def main(save_path: str):
     # Parse the arguments
     args = get_parser(print_help=True if len(sys.argv) == 1 else False)
 
-    # Read the config file, if changed, we will start from scratch
-    config = read_config(config_file=args.config)
-
     # Get the logger
     logger = get_logger(verbose=args.verbose)
+
+    # Read the config file, if changed, we will start from scratch
+    config = read_config(config_file=args.config, logger=logger)
 
     # Validate the config file
     # This does schema validation and checks for logical loops in the config
@@ -1186,7 +1206,10 @@ def main(save_path: str):
             raise FileNotFoundError
 
         # Now load the previous state from disk
-        previous_dict = load_from_disk(path_join(save_path, 'loose.statefile'))
+        previous_dict = load_from_disk(
+            filename=path_join(save_path, 'loose.statefile'),
+            logger=logger,
+        )
         if args.dump_state:
             if not previous_dict:
                 logger.error('No previous state found to dump!')
@@ -1284,12 +1307,12 @@ def main_wrapper():
             main(save_path=save_path)
     except Timeout:
         # Another instance is already running, all good
-        logger = get_logger(verbose=False)
+        logger = get_logger()
         logger.info('Another instance of loose is already running, skipping.')
         exit(0)
     except Exception as e:
         # Something else, dunno, log it and fail
-        logger = get_logger(verbose=False)
+        logger = get_logger()
         logger.error(f'An error occurred: {str(e)}')
         exit(1)
 
