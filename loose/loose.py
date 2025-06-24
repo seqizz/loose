@@ -764,6 +764,40 @@ def clear_impossible_configs(main_dict: dict, logger: logging.Logger) -> dict:
     return main_dict
 
 
+def _validate_device_compatibility(device: dict, config: dict, alias: str, logger: logging.Logger) -> bool:
+    """Validates if a device is compatible with the given config section"""
+    needed_x, needed_y = None, None
+    if 'resolution' in config:
+        needed_x, needed_y = (
+            int(x) for x in config['resolution'].split('x')
+        )
+    needed_frequency = config.get('frequency')
+
+    # Validate resolution
+    if needed_x and not any(
+        mode['resolution_width'] == needed_x
+        and mode['resolution_height'] == needed_y
+        for mode in device['resolution_modes']
+    ):
+        logger.debug(
+            f'Config with alias "{alias}" is not applicable to device "{device["device_name"]}" due to resolution mismatch'
+        )
+        return False
+    
+    # Validate frequency
+    if needed_frequency and not any(
+        frequency['frequency'] == needed_frequency
+        for mode in device['resolution_modes']
+        for frequency in mode['frequencies']
+    ):
+        logger.debug(
+            f'Config with alias "{alias}" is not applicable to device "{device["device_name"]}" due to frequency mismatch'
+        )
+        return False
+    
+    return True
+
+
 def assign_aliases(main_dict: dict, logger: logging.Logger) -> dict:
     # Initialize aliases for all connected devices
     for device in main_dict['identifiers']:
@@ -786,38 +820,11 @@ def assign_aliases(main_dict: dict, logger: logging.Logger) -> dict:
                 if device['device_name'] not in section:
                     continue
 
-                # Check resolution compatibility
-                needed_x, needed_y = None, None
-                if 'resolution' in section[device['device_name']]:
-                    needed_x, needed_y = (
-                        int(x)
-                        for x in section[device['device_name']][
-                            'resolution'
-                        ].split('x')
-                    )
-                needed_frequency = section[device['device_name']].get(
-                    'frequency'
-                )
+                # Check compatibility using the extracted function
+                if not _validate_device_compatibility(
+                    device, section[device['device_name']], device['device_name'], logger
+                ):
 
-                # Validate resolution and frequency
-                if needed_x and not any(
-                    mode['resolution_width'] == needed_x
-                    and mode['resolution_height'] == needed_y
-                    for mode in device['resolution_modes']
-                ):
-                    logger.debug(
-                        f'Config "{section}" is not applicable to device "{device["device_name"]}" due to resolution mismatch'
-                    )
-                    main_dict['active_config'].remove(section)
-                    continue
-                if needed_frequency and not any(
-                    frequency['frequency'] == needed_frequency
-                    for mode in device['resolution_modes']
-                    for frequency in mode['frequencies']
-                ):
-                    logger.debug(
-                        f'Config "{section}" is not applicable to device "{device["device_name"]}" due to frequency mismatch'
-                    )
                     main_dict['active_config'].remove(section)
                     continue
 
@@ -857,32 +864,10 @@ def assign_aliases(main_dict: dict, logger: logging.Logger) -> dict:
                     if alias not in section:
                         continue
 
-                    needed_x, needed_y = None, None
-                    if 'resolution' in section[alias]:
-                        needed_x, needed_y = (
-                            int(x)
-                            for x in section[alias]['resolution'].split('x')
-                        )
-                    needed_frequency = section[alias].get('frequency')
+                    if not _validate_device_compatibility(
+                        device, section[alias], alias, logger
+                    ):
 
-                    if needed_x and not any(
-                        mode['resolution_width'] == needed_x
-                        and mode['resolution_height'] == needed_y
-                        for mode in device['resolution_modes']
-                    ):
-                        logger.debug(
-                            f'Config "{section}" is not applicable to device "{device["device_name"]}" due to resolution mismatch'
-                        )
-                        mismatch = True
-                        continue
-                    if needed_frequency and not any(
-                        frequency['frequency'] == needed_frequency
-                        for mode in device['resolution_modes']
-                        for frequency in mode['frequencies']
-                    ):
-                        logger.debug(
-                            f'Config "{section}" is not applicable to device "{device["device_name"]}" due to frequency mismatch'
-                        )
                         mismatch = True
                         continue
 
