@@ -250,6 +250,12 @@ def get_parser(print_help: bool) -> argparse.Namespace:
         action='store_true',
         help='Only apply changes if connected devices or config changed',
     )
+    rotate_group.add_argument(
+        '-i',
+        '--ignore-failing-hooks',
+        action='store_true',
+        help='Ignore failing pre-hooks and continue applying xrandr commands, useful for initial runs',
+    )
     sub.add_parser(
         'show',
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -634,6 +640,7 @@ def apply_xrandr_command(
     config_to_apply: dict,
     logger: logging.Logger,
     dry_run: bool,
+    ignore_failing_hooks: bool = False,
 ) -> bool:
     """Applies the given config to the xrandr output"""
 
@@ -686,18 +693,34 @@ def apply_xrandr_command(
         xrandr_command.extend(['--output', device, '--off'])
 
     # Execute pre-hooks, xrandr command, and post-hooks
-    if not _execute_hooks(replaced_config, 'pre', logger, dry_run):
+    if not _execute_hooks(
+        config=replaced_config,
+        hook_type='pre',
+        logger=logger,
+        dry_run=dry_run,
+        ignore_failing_hooks=ignore_failing_hooks,
+    ):
         return False
 
     if not _execute_xrandr(xrandr_command, replaced_config, logger, dry_run):
         return False
 
-    _execute_hooks(replaced_config, 'post', logger, dry_run)
+    _execute_hooks(
+        config=replaced_config,
+        hook_type='post',
+        logger=logger,
+        dry_run=dry_run,
+        ignore_failing_hooks=ignore_failing_hooks,
+    )
     return True
 
 
 def _execute_hooks(
-    config: dict, hook_type: str, logger: logging.Logger, dry_run: bool
+    config: dict,
+    hook_type: str,
+    logger: logging.Logger,
+    dry_run: bool,
+    ignore_failing_hooks: bool = False,
 ) -> bool:
     """Execute pre or post hooks, returns False only for pre-hook failures"""
     if 'hooks' not in config or hook_type not in config['hooks']:
@@ -714,7 +737,7 @@ def _execute_hooks(
             logger.error(
                 f'{hook_type.capitalize()}-hook "{hook}" failed! {"Continuing anyway..." if hook_type == "post" else ""}'
             )
-            if hook_type == 'pre':
+            if hook_type == 'pre' and not ignore_failing_hooks:
                 return False
     return True
 
@@ -1149,6 +1172,7 @@ def rotate(
     logger: logging.Logger,
     main_dict: dict,
     save_file: str,
+    ignore_failing_hooks: bool = False,
 ):
     """Rotates the current config to the next one"""
     logger.debug(
@@ -1167,6 +1191,7 @@ def rotate(
         config_to_apply=next_config,
         logger=logger,
         dry_run=args.dry_run,
+        ignore_failing_hooks=ignore_failing_hooks,
     )
 
     if not run_result:
@@ -1388,6 +1413,7 @@ def main(save_path: str):
             logger=logger,
             main_dict=main_dict,
             save_file=path_join(save_path, 'loose.statefile'),
+            ignore_failing_hooks=args.ignore_failing_hooks,
         )
     elif args.command == 'show':
         show(
