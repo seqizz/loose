@@ -764,13 +764,13 @@ def clear_impossible_configs(main_dict: dict, logger: logging.Logger) -> dict:
     return main_dict
 
 
-def _validate_device_compatibility(device: dict, config: dict, alias: str, logger: logging.Logger) -> bool:
+def _validate_device_compatibility(
+    device: dict, config: dict, alias: str, logger: logging.Logger
+) -> bool:
     """Validates if a device is compatible with the given config section"""
     needed_x, needed_y = None, None
     if 'resolution' in config:
-        needed_x, needed_y = (
-            int(x) for x in config['resolution'].split('x')
-        )
+        needed_x, needed_y = (int(x) for x in config['resolution'].split('x'))
     needed_frequency = config.get('frequency')
 
     # Validate resolution
@@ -783,7 +783,7 @@ def _validate_device_compatibility(device: dict, config: dict, alias: str, logge
             f'Config with alias "{alias}" is not applicable to device "{device["device_name"]}" due to resolution mismatch'
         )
         return False
-    
+
     # Validate frequency
     if needed_frequency and not any(
         frequency['frequency'] == needed_frequency
@@ -794,7 +794,7 @@ def _validate_device_compatibility(device: dict, config: dict, alias: str, logge
             f'Config with alias "{alias}" is not applicable to device "{device["device_name"]}" due to frequency mismatch'
         )
         return False
-    
+
     return True
 
 
@@ -816,28 +816,13 @@ def assign_aliases(main_dict: dict, logger: logging.Logger) -> dict:
     # First assign device names as their own aliases
     for device in main_dict['identifiers']:
         if device['is_connected'] and device['aliases'] == []:
-            for section in main_dict['active_config']:
-                if device['device_name'] not in section:
-                    continue
-
-                # Check compatibility using the extracted function
-                if not _validate_device_compatibility(
-                    device, section[device['device_name']], device['device_name'], logger
-                ):
-
-                    main_dict['active_config'].remove(section)
-                    continue
-
-                if any(
-                    device['device_name'] in d
-                    for d in main_dict['active_config']
-                ):
-                    logger.debug(
-                        f'Assigning device definition "{device["device_name"]}" to device "{device["device_name"]}"'
-                    )
-                    device['aliases'].append(device['device_name'])
-                    unassigned_aliases.remove(device['device_name'])
-                    break
+            _assign_single_alias(
+                device,
+                device['device_name'],
+                main_dict,
+                logger,
+                unassigned_aliases,
+            )
 
     # Now handle actual aliases with the same two-pass approach
     unassigned_aliases_copy = unassigned_aliases.copy()
@@ -855,31 +840,10 @@ def assign_aliases(main_dict: dict, logger: logging.Logger) -> dict:
                 if _ == 0 and device['aliases']:
                     continue
 
-                logger.debug(
-                    f'Checking compatibility of "{alias}" for device "{device["device_name"]}"'
-                )
-
-                mismatch = False
-                for section in main_dict['active_config']:
-                    if alias not in section:
-                        continue
-
-                    if not _validate_device_compatibility(
-                        device, section[alias], alias, logger
-                    ):
-
-                        mismatch = True
-                        continue
-
-                if mismatch:
-                    continue
-
-                logger.debug(
-                    f'Assigning alias "{alias}" to device "{device["device_name"]}"'
-                )
-                device['aliases'].append(alias)
-                unassigned_aliases.remove(alias)
-                break
+                if _assign_single_alias(
+                    device, alias, main_dict, logger, unassigned_aliases
+                ):
+                    break
 
     # Log determined aliases
     for device in main_dict['identifiers']:
@@ -898,6 +862,63 @@ def assign_aliases(main_dict: dict, logger: logging.Logger) -> dict:
                 main_dict['active_config'].remove(config)
 
     return main_dict
+
+
+def _assign_single_alias(
+    device: dict,
+    alias: str,
+    main_dict: dict,
+    logger: logging.Logger,
+    unassigned_aliases: list,
+) -> bool:
+    """Assigns a single alias to a device if compatible, returns True if assigned"""
+    # For device names, check if they exist in any config section
+    if alias == device['device_name']:
+        for section in main_dict['active_config']:
+            if device['device_name'] not in section:
+                continue
+
+            # Check compatibility using the extracted function
+            if not _validate_device_compatibility(
+                device,
+                section[device['device_name']],
+                device['device_name'],
+                logger,
+            ):
+                main_dict['active_config'].remove(section)
+                continue
+
+            if any(
+                device['device_name'] in d for d in main_dict['active_config']
+            ):
+                logger.debug(
+                    f'Assigning device definition "{device["device_name"]}" to device "{device["device_name"]}"'
+                )
+                device['aliases'].append(device['device_name'])
+                unassigned_aliases.remove(device['device_name'])
+                return True
+    else:
+        # For aliases, check compatibility across all sections
+        logger.debug(
+            f'Checking compatibility of "{alias}" for device "{device["device_name"]}"'
+        )
+
+        for section in main_dict['active_config']:
+            if alias not in section:
+                continue
+            if not _validate_device_compatibility(
+                device, section[alias], alias, logger
+            ):
+                return False
+
+        logger.debug(
+            f'Assigning alias "{alias}" to device "{device["device_name"]}"'
+        )
+        device['aliases'].append(alias)
+        unassigned_aliases.remove(alias)
+        return True
+
+    return False
 
 
 def get_next_config(
