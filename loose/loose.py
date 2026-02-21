@@ -829,27 +829,43 @@ def _validate_device_compatibility(
         needed_x, needed_y = (int(x) for x in config['resolution'].split('x'))
     needed_frequency = config.get('frequency')
 
-    # Validate resolution
-    if needed_x and not any(
-        mode['resolution_width'] == needed_x
-        and mode['resolution_height'] == needed_y
-        for mode in device['resolution_modes']
-    ):
-        logger.debug(
-            f'Config with alias "{alias}" is not applicable to device "{device["device_name"]}" due to resolution mismatch'
-        )
-        return False
-
-    # Validate frequency
-    if needed_frequency and not any(
-        frequency['frequency'] == needed_frequency
-        for mode in device['resolution_modes']
-        for frequency in mode['frequencies']
-    ):
-        logger.debug(
-            f'Config with alias "{alias}" is not applicable to device "{device["device_name"]}" due to frequency mismatch'
-        )
-        return False
+    # Validate resolution and frequency together when both are specified
+    if needed_x and needed_frequency:
+        if not any(
+            mode['resolution_width'] == needed_x
+            and mode['resolution_height'] == needed_y
+            and any(
+                f['frequency'] == needed_frequency
+                for f in mode['frequencies']
+            )
+            for mode in device['resolution_modes']
+        ):
+            logger.debug(
+                f'Config with alias "{alias}" is not applicable to device "{device["device_name"]}" due to resolution+frequency mismatch'
+            )
+            return False
+    elif needed_x:
+        # Validate resolution only
+        if not any(
+            mode['resolution_width'] == needed_x
+            and mode['resolution_height'] == needed_y
+            for mode in device['resolution_modes']
+        ):
+            logger.debug(
+                f'Config with alias "{alias}" is not applicable to device "{device["device_name"]}" due to resolution mismatch'
+            )
+            return False
+    elif needed_frequency:
+        # Validate frequency only
+        if not any(
+            frequency['frequency'] == needed_frequency
+            for mode in device['resolution_modes']
+            for frequency in mode['frequencies']
+        ):
+            logger.debug(
+                f'Config with alias "{alias}" is not applicable to device "{device["device_name"]}" due to frequency mismatch'
+            )
+            return False
 
     return True
 
