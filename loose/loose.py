@@ -74,7 +74,7 @@ def build_main_dict(config: dict) -> dict:
 
                 device_info = {
                     'device_name': device['device_name'],
-                    'product_id': device['props']['EdidModel']['product_id'],
+                    'product_id': device.get('props', {}).get('EdidModel', {}).get('product_id'),
                     'is_active': device['device_name'] in active_devices,
                     'is_connected': True,
                     'resolution_modes': resolution_modes,
