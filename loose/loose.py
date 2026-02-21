@@ -1238,13 +1238,10 @@ def show(
     print('-' * round(get_terminal_size().columns / 3))
 
     for conf in main_dict['active_config']:
-        current = False
-        if 'is_current' in conf:
-            current = True
-            del conf['is_current']
+        current = 'is_current' in conf
         converted_config = replace_aliases_with_real_names(
             main_dict=main_dict,
-            config_to_convert=conf,
+            config_to_convert={k: v for k, v in conf.items() if k != 'is_current'},
             logger=logger,
         )
         if current:
