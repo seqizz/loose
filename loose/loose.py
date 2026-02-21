@@ -658,6 +658,8 @@ def apply_xrandr_command(
     xrandr_command = [xrandr_binary]
     # Configure devices mentioned in the config
     for device, config in replaced_config.items():
+        if device == 'hooks':
+            continue
         xrandr_command += ['--output', device]
         if 'disabled' in config:
             xrandr_command += ['--off']
