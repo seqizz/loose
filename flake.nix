@@ -11,11 +11,12 @@
       let
         pkgs = nixpkgs.legacyPackages.${system};
         python = pkgs.python3;
+        pyproject = builtins.fromTOML (builtins.readFile ./pyproject.toml);
         pyedid = python.pkgs.callPackage ./nix/pyedid.nix {};
       in {
         packages.default = python.pkgs.buildPythonApplication {
           pname = "loose";
-          version = "0.2.7";
+          version = pyproject.project.version;
           pyproject = true;
 
           src = ./.;
@@ -32,7 +33,7 @@
           propagatedBuildInputs = with python.pkgs; [
             filelock
             jc
-            pkgs.xorg.xrandr
+            pkgs.xrandr
             pyedid
             pyyaml
             typing-extensions
@@ -63,7 +64,7 @@
           packages = [
             python
             pkgs.uv
-            pkgs.xorg.xrandr
+            pkgs.xrandr
           ];
         };
       }

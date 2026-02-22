@@ -7,6 +7,7 @@ import subprocess
 import sys
 from collections import defaultdict
 from copy import deepcopy
+from importlib.metadata import version as pkg_version
 from importlib.util import find_spec
 from os import environ, get_terminal_size
 from os.path import (
@@ -30,9 +31,7 @@ DEFAULT_CONFIG_FILE = f'{xdg_config_home()}/loose/config.yaml'
 PY_MAJOR_VERSION = 3
 PY_MINOR_VERSION = 10
 RUN_TIMEOUT_SEC = 30  # In case of a stuck process
-# Can't believe I don't have a portable way to do get the real version
-# Poetry™ bullshit, has to be synced with pyproject.toml
-VERSION = '0.2.7'
+VERSION = pkg_version('loose')
 
 
 def build_main_dict(config: dict) -> dict:

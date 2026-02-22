@@ -1,6 +1,6 @@
 [project]
 name = "loose"
-version = "0.2.7"
+version = "0.3.0"
 description = "A simple tool to apply XrandR configurations"
 authors = [
     { name = "Gürkan", email = "gitoperations@gurkan.in" },
