@@ -834,7 +834,7 @@ def _validate_device_compatibility(
             mode['resolution_width'] == needed_x
             and mode['resolution_height'] == needed_y
             and any(
-                f['frequency'] == needed_frequency
+                round(f['frequency']) == needed_frequency
                 for f in mode['frequencies']
             )
             for mode in device['resolution_modes']
@@ -857,7 +857,7 @@ def _validate_device_compatibility(
     elif needed_frequency:
         # Validate frequency only
         if not any(
-            frequency['frequency'] == needed_frequency
+            round(frequency['frequency']) == needed_frequency
             for mode in device['resolution_modes']
             for frequency in mode['frequencies']
         ):

@@ -33,6 +33,47 @@ class TestValidateDeviceCompatibility:
         config = {'resolution': '1920x1200', 'frequency': 60}
         assert _validate_device_compatibility(device_hdmi1, config, '_1', logger) is True
 
+    def test_fractional_frequency_rounds_to_match(self, logger):
+        """Real xrandr reports e.g. 59.95 Hz — config with 60 should match."""
+        device = {
+            'device_name': 'eDP-1',
+            'product_id': '0x1234',
+            'is_active': True,
+            'is_connected': True,
+            'resolution_modes': [
+                {
+                    'resolution_width': 1920,
+                    'resolution_height': 1200,
+                    'frequencies': [
+                        {'frequency': 59.95, 'is_current': True, 'is_preferred': True},
+                        {'frequency': 59.88, 'is_current': False, 'is_preferred': False},
+                    ],
+                },
+            ],
+        }
+        config = {'resolution': '1920x1200', 'frequency': 60}
+        assert _validate_device_compatibility(device, config, '_1', logger) is True
+
+    def test_fractional_frequency_no_false_positive(self, logger):
+        """59.3 Hz should NOT round to 60."""
+        device = {
+            'device_name': 'eDP-1',
+            'product_id': '0x1234',
+            'is_active': True,
+            'is_connected': True,
+            'resolution_modes': [
+                {
+                    'resolution_width': 1920,
+                    'resolution_height': 1200,
+                    'frequencies': [
+                        {'frequency': 59.3, 'is_current': True, 'is_preferred': True},
+                    ],
+                },
+            ],
+        }
+        config = {'resolution': '1920x1200', 'frequency': 60}
+        assert _validate_device_compatibility(device, config, '_1', logger) is False
+
     def test_empty_resolution_modes(self, device_dp2_disconnected, logger):
         """Disconnected device with no modes: resolution check fails."""
         config = {'resolution': '1920x1080'}
