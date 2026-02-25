@@ -1335,7 +1335,8 @@ def main(save_path: str):
 
     # We will sleep a bit to let hardware settle down
     # (e.g. when you plug-in a dock, it takes a bit to recognize multiple screens etc.)
-    sleep(1)
+    if args.command == 'rotate':
+        sleep(1)
 
     # Construct the main dictionary, will use it for comparison
     new_main_dict = fresh_start(args=args, config=config, logger=logger)
