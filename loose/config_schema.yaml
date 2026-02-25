@@ -9,9 +9,13 @@ screen_config:
 
 device:
   resolution: str(required=False)
-  frequency: int(required=False)
+  frequency: num(required=False)
   primary: bool(required=False)
   left-of: str(required=False)
+  right-of: str(required=False)
+  above: str(required=False)
+  below: str(required=False)
+  rotate: str(required=False)
   disabled: bool(required=False)
 
 hooks:
