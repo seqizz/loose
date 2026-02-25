@@ -392,7 +392,17 @@ def parse_xrandr(props: bool = False) -> dict:
     command = ['xrandr']
     if props:
         command.append('--properties')
-    outta = subprocess.check_output(command, text=True)
+    try:
+        outta = subprocess.check_output(command, text=True)
+    except subprocess.CalledProcessError as e:
+        raise RuntimeError(
+            f'xrandr failed (exit code {e.returncode}) — '
+            'is DISPLAY set? (loose requires X11)'
+        ) from e
+    except FileNotFoundError:
+        raise RuntimeError(
+            'xrandr not found — is it installed?'
+        )
 
     # It was horror trying to parse that ^bull(?:l+)?shit$ with regex myself
     # Kudos to jc: https://github.com/kellyjonbrazil/jc
