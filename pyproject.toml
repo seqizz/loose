@@ -1,6 +1,6 @@
 [project]
 name = "loose"
-version = "0.3.1"
+version = "0.4.1"
 description = "A simple tool to apply XrandR configurations"
 authors = [
     { name = "Gürkan", email = "gitoperations@gurkan.in" },
@@ -32,3 +32,4 @@ build-backend = "hatchling.build"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+addopts = "--ignore=tests/showtest.py"

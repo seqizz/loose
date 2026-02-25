@@ -9,7 +9,7 @@ from collections import defaultdict
 from copy import deepcopy
 from importlib.metadata import version as pkg_version
 from importlib.util import find_spec
-from os import environ, get_terminal_size
+from os import environ
 from os.path import (
     abspath,
     dirname,
@@ -25,7 +25,7 @@ import jc
 import yamale
 from filelock import FileLock, Timeout
 from xdg_base_dirs import xdg_config_home, xdg_state_home
-from yaml import dump, safe_load
+from yaml import safe_load
 
 DEFAULT_CONFIG_FILE = f'{xdg_config_home()}/loose/config.yaml'
 PY_MAJOR_VERSION = 3
@@ -73,7 +73,9 @@ def build_main_dict(config: dict) -> dict:
 
                 device_info = {
                     'device_name': device['device_name'],
-                    'product_id': device.get('props', {}).get('EdidModel', {}).get('product_id'),
+                    'product_id': device.get('props', {})
+                    .get('EdidModel', {})
+                    .get('product_id'),
                     'is_active': device['device_name'] in active_devices,
                     'is_connected': True,
                     'resolution_modes': resolution_modes,
@@ -400,9 +402,7 @@ def parse_xrandr(props: bool = False) -> dict:
             'is DISPLAY set? (loose requires X11)'
         ) from e
     except FileNotFoundError:
-        raise RuntimeError(
-            'xrandr not found — is it installed?'
-        )
+        raise RuntimeError('xrandr not found — is it installed?')
 
     # It was horror trying to parse that ^bull(?:l+)?shit$ with regex myself
     # Kudos to jc: https://github.com/kellyjonbrazil/jc
@@ -1086,7 +1086,7 @@ def assign_aliases(main_dict: dict, logger: logging.Logger) -> dict:
     # This output will now reflect that each device gets at most one _X alias.
     for device in main_dict['identifiers']:
         if device['is_connected']:
-            logger.info(
+            logger.debug(
                 f'Determined aliases for device "{device["device_name"]}": {", ".join(device.get("aliases", []))}'
             )
 
@@ -1236,52 +1236,382 @@ def rotate(
         )
 
 
+def _build_monitor_grid(config: dict) -> dict:
+    """Assigns (row, col) grid coordinates to each device based on positioning.
+
+    Returns {device_name: (row, col)} mapping.
+    """
+    positions = {}
+    positioning_keys = {'left-of', 'right-of', 'above', 'below'}
+
+    # Collect positioning relationships
+    relations = {}  # device -> (directive, target)
+    devices = [d for d in config if d != 'hooks']
+    for device in devices:
+        props = config[device]
+        if not isinstance(props, dict):
+            continue
+        for key in positioning_keys:
+            if key in props:
+                relations[device] = (key, props[key])
+                break
+
+    # Place devices that are not positioned relative to others first
+    # (i.e. "anchor" devices that others reference)
+    placed = set()
+    col_counter = 0
+
+    # Find anchors: devices not in relations (no positioning directive)
+    anchors = [d for d in devices if d not in relations]
+    if not anchors and devices:
+        # All devices have positioning; pick the first one as anchor
+        anchors = [devices[0]]
+
+    for anchor in anchors:
+        positions[anchor] = (0, col_counter)
+        placed.add(anchor)
+        col_counter += 1
+
+    # Iteratively place devices that reference already-placed devices
+    max_iterations = len(devices) * 2
+    for _ in range(max_iterations):
+        if len(placed) == len(devices):
+            break
+        for device in devices:
+            if device in placed:
+                continue
+            if device not in relations:
+                positions[device] = (0, col_counter)
+                placed.add(device)
+                col_counter += 1
+                continue
+            directive, target = relations[device]
+            if target not in positions:
+                continue
+            tr, tc = positions[target]
+            if directive == 'right-of':
+                positions[device] = (tr, tc + 1)
+            elif directive == 'left-of':
+                positions[device] = (tr, tc - 1)
+            elif directive == 'below':
+                positions[device] = (tr + 1, tc)
+            elif directive == 'above':
+                positions[device] = (tr - 1, tc)
+            placed.add(device)
+
+    # Place any remaining unresolved devices
+    for device in devices:
+        if device not in placed:
+            positions[device] = (0, col_counter)
+            col_counter += 1
+
+    # Normalize so minimum row/col is 0
+    if positions:
+        min_r = min(r for r, c in positions.values())
+        min_c = min(c for r, c in positions.values())
+        positions = {
+            d: (r - min_r, c - min_c) for d, (r, c) in positions.items()
+        }
+
+    return positions
+
+
+def _get_preferred_mode(device_name: str, identifiers: list):
+    """Find preferred resolution/frequency for a device from xrandr data."""
+    for ident in identifiers:
+        if ident['device_name'] == device_name:
+            for mode in ident.get('resolution_modes', []):
+                for freq in mode.get('frequencies', []):
+                    if freq.get('is_preferred'):
+                        res = (
+                            f'{mode["resolution_width"]}'
+                            f'x{mode["resolution_height"]}'
+                        )
+                        return res, freq['frequency']
+    return None, None
+
+
+def _get_device_content_lines(
+    name: str, props: dict, identifiers: list = None
+) -> tuple:
+    """Builds the text lines to display inside a monitor box.
+
+    Returns (lines, used_preferred, is_primary).
+    """
+    is_primary = isinstance(props, dict) and props.get('primary', False)
+    display_name = f'{name}\u00b9' if is_primary else name
+    lines = [display_name]
+    used_preferred = False
+
+    if not isinstance(props, dict) or not props:
+        # No config props — resolve preferred from xrandr if possible
+        if identifiers:
+            pref_res, pref_freq = _get_preferred_mode(name, identifiers)
+            if pref_res and pref_freq:
+                lines.append(f'{pref_res} @ {pref_freq}Hz*')
+                used_preferred = True
+                return lines, used_preferred, is_primary
+        lines.append('(preferred)')
+        return lines, used_preferred, is_primary
+
+    disabled = props.get('disabled', False)
+    if disabled:
+        lines.append('(disabled)')
+        return lines, used_preferred, is_primary
+
+    res = props.get('resolution')
+    freq = props.get('frequency')
+    if res and freq:
+        lines.append(f'{res} @ {freq}Hz')
+    elif res:
+        lines.append(res)
+    elif freq:
+        lines.append(f'@ {freq}Hz')
+    else:
+        # No resolution or frequency — resolve preferred
+        if identifiers:
+            pref_res, pref_freq = _get_preferred_mode(name, identifiers)
+            if pref_res and pref_freq:
+                lines.append(f'{pref_res} @ {pref_freq}Hz*')
+                used_preferred = True
+            else:
+                lines.append('(preferred)')
+        else:
+            lines.append('(preferred)')
+
+    if 'rotate' in props and props['rotate'] != 'normal':
+        lines.append(f'rotate {props["rotate"]}')
+
+    for pos_key in ('left-of', 'right-of', 'above', 'below'):
+        if pos_key in props:
+            lines.append(f'{pos_key} {props[pos_key]}')
+
+    return lines, used_preferred, is_primary
+
+
+def _render_monitor_box(
+    content_lines: list, width: int, height: int, disabled: bool = False
+) -> list:
+    """Renders a single monitor as a list of strings of uniform width.
+
+    Active monitors use solid box-drawing borders (─, │, ┌, ┐, └, ┘).
+    Disabled monitors use dashed borders (╌, ┆, ┌, ┐, └, ┘).
+    """
+    if disabled:
+        h_char, v_char = '╌', '┆'
+    else:
+        h_char, v_char = '─', '│'
+
+    top_border = '┌' + h_char * (width - 2) + '┐'
+    bot_border = '└' + h_char * (width - 2) + '┘'
+    inner_width = width - 4  # v_char + space + content + space + v_char
+
+    # Vertically center the content
+    inner_height = height - 2  # minus top and bottom border
+    pad_top = max(0, (inner_height - len(content_lines)) // 2)
+    pad_bottom = max(0, inner_height - len(content_lines) - pad_top)
+
+    rows = [top_border]
+    for _ in range(pad_top):
+        rows.append(f'{v_char}{" " * (width - 2)}{v_char}')
+    for line in content_lines:
+        centered = line.center(inner_width)
+        rows.append(f'{v_char} {centered} {v_char}')
+    for _ in range(pad_bottom):
+        rows.append(f'{v_char}{" " * (width - 2)}{v_char}')
+    rows.append(bot_border)
+
+    return rows
+
+
+def _render_config_layout(config: dict, identifiers: list = None) -> tuple:
+    """Renders a full config section as monitor layout with box-drawing chars.
+
+    Returns (lines, used_preferred) where used_preferred indicates
+    whether any device used the * marker for display defaults.
+    """
+    # Filter out non-device keys
+    devices = {k: v for k, v in config.items() if k != 'hooks'}
+    if not devices:
+        return [], False, False
+
+    # Build grid positions
+    grid = _build_monitor_grid(config)
+
+    # Compute content lines and minimum box sizes for each device
+    any_preferred = False
+    any_primary = False
+    device_info = {}
+    for name, props in devices.items():
+        content, used_pref, is_primary = _get_device_content_lines(
+            name, props, identifiers=identifiers
+        )
+        if used_pref:
+            any_preferred = True
+        if is_primary:
+            any_primary = True
+        disabled = isinstance(props, dict) and props.get('disabled', False)
+        # Minimum width: longest content line + 4 (borders + padding)
+        min_width = max(len(line) for line in content) + 4
+        # Parse resolution for proportional sizing
+        pw, ph = 1920, 1080  # default
+        if isinstance(props, dict) and 'resolution' in props:
+            parts = props['resolution'].split('x')
+            if len(parts) == 2:
+                try:
+                    pw, ph = int(parts[0]), int(parts[1])
+                except ValueError:
+                    pass
+        # Swap dimensions for rotated (portrait) monitors
+        if isinstance(props, dict) and props.get('rotate') in (
+            'left',
+            'right',
+        ):
+            pw, ph = ph, pw
+        device_info[name] = {
+            'content': content,
+            'disabled': disabled,
+            'px_w': pw,
+            'px_h': ph,
+            'min_width': min_width,
+        }
+
+    # Scale box widths proportionally
+    # Target: widest monitor ~24 chars, minimum from content
+    max_px_w = max(d['px_w'] for d in device_info.values())
+    target_max_width = 24
+    for name, info in device_info.items():
+        proportional = int(target_max_width * info['px_w'] / max_px_w)
+        scaled_w = max(proportional, info['min_width'])
+        info['box_width'] = scaled_w
+
+    # Scale box heights proportionally
+    max_px_h = max(d['px_h'] for d in device_info.values())
+    for name, info in device_info.items():
+        content_height = len(info['content']) + 2  # +2 for borders
+        # Proportional height: scale relative to tallest, min 6 lines total
+        scaled_h = max(int(8 * info['px_h'] / max_px_h), content_height)
+        info['box_height'] = scaled_h
+
+    # Render individual boxes
+    boxes = {}
+    for name, info in device_info.items():
+        boxes[name] = _render_monitor_box(
+            content_lines=info['content'],
+            width=info['box_width'],
+            height=info['box_height'],
+            disabled=info['disabled'],
+        )
+
+    # Determine grid dimensions
+    max_row = max(r for r, c in grid.values())
+    max_col = max(c for r, c in grid.values())
+
+    # Calculate column widths and row heights from placed boxes
+    col_widths = [0] * (max_col + 1)
+    row_heights = [0] * (max_row + 1)
+    for name, (r, c) in grid.items():
+        if name in boxes:
+            col_widths[c] = max(col_widths[c], len(boxes[name][0]))
+            row_heights[r] = max(row_heights[r], len(boxes[name]))
+
+    # Compose onto a 2D canvas
+    gap = 2  # gap between columns
+    total_width = sum(col_widths) + gap * max_col
+    total_height = sum(row_heights)
+
+    # Build canvas as list of lists of spaces
+    canvas = [[' '] * total_width for _ in range(total_height)]
+
+    for name, (r, c) in grid.items():
+        if name not in boxes:
+            continue
+        box_lines = boxes[name]
+        # Calculate x offset (column start)
+        x_offset = sum(col_widths[:c]) + gap * c
+        # Calculate y offset (row start), vertically center within row cell
+        y_start = sum(row_heights[:r])
+        y_pad = (row_heights[r] - len(box_lines)) // 2
+        y_offset = y_start + y_pad
+
+        for i, line in enumerate(box_lines):
+            for j, ch in enumerate(line):
+                if y_offset + i < total_height and x_offset + j < total_width:
+                    canvas[y_offset + i][x_offset + j] = ch
+
+    return (
+        [''.join(row).rstrip() for row in canvas],
+        any_preferred,
+        any_primary,
+    )
+
+
 def show(
     main_dict: dict,
     config: dict,
     logger: logging.Logger,
 ):
-    """Pretty-prints the current config to stdout"""
-    print('Currently active config:')
-    print()
-    print('-' * round(get_terminal_size().columns / 3))
+    """Pretty-prints the current config as monitor layout with box-drawing"""
+    # If no config has is_current, treat the first one as active
+    has_current = any('is_current' in c for c in main_dict['active_config'])
+    show_preferred = False
+    show_primary = False
+    identifiers = main_dict.get('identifiers', [])
 
-    for conf in main_dict['active_config']:
-        current = 'is_current' in conf
+    print()  # Blank line for separation
+
+    for idx, conf in enumerate(main_dict['active_config'], 1):
+        if has_current:
+            current = 'is_current' in conf
+        else:
+            current = idx == 1
         converted_config = replace_aliases_with_real_names(
             main_dict=main_dict,
-            config_to_convert={k: v for k, v in conf.items() if k != 'is_current'},
+            config_to_convert={
+                k: v for k, v in conf.items() if k != 'is_current'
+            },
             logger=logger,
         )
+        header = f'Config {idx}'
         if current:
-            print('👉 ', end='')
-        else:
-            print('  ', end='')
-        print(
-            dump(
-                converted_config,
-                default_flow_style=False,
-                indent=7,
-            )
+            # print ansi to make "active" green
+            header += ' (\u001b[32mactive\u001b[0m)'
+        print(f'{header}:')
+
+        lines, used_pref, used_pri = _render_config_layout(
+            converted_config, identifiers=identifiers
         )
-        print('-' * round(get_terminal_size().columns / 3))
+        if used_pref:
+            show_preferred = True
+        if used_pri:
+            show_primary = True
+        for line in lines:
+            print(line)
+        print()
 
     if 'global_failback' in config:
-        print('-' * round(get_terminal_size().columns / 3))
-        print('Global failback directive:')
-        print()
-        print(
-            dump(
-                replace_aliases_with_real_names(
-                    main_dict=main_dict,
-                    config_to_convert=config['global_failback'],
-                    logger=logger,
-                ),
-                default_flow_style=False,
-                indent=7,
-            )
+        print('Global failback:')
+        failback_config = replace_aliases_with_real_names(
+            main_dict=main_dict,
+            config_to_convert=config['global_failback'],
+            logger=logger,
         )
-        print('-' * round(get_terminal_size().columns / 3))
+        lines, used_pref, used_pri = _render_config_layout(
+            failback_config, identifiers=identifiers
+        )
+        if used_pref:
+            show_preferred = True
+        if used_pri:
+            show_primary = True
+        for line in lines:
+            print(line)
+        print()
+
+    # Print footnotes if any markers were used
+    if show_primary:
+        print(' \u00b9 primary display')
+    if show_preferred:
+        print(' * preferred display defaults')
 
 
 def fresh_start(
