@@ -29,12 +29,14 @@ Come on, I just want to define some non-specific settings. Something like:
 - It will try to detect the suitable devices for given aliases consistently (thus you can declare self-correcting preferences like "2 monitors" example above)
 - Something failed bad? Then it will try the global failback option defined in the config
 
-I highly recommend checking the [example config](loose/example_config.yaml) for examples and explanations.
+### Configuration
 
-### Installation (What installation?)
+Just check the [example config](loose/example_config.yaml).
+
+### Installation
 
 Since I am using NixOS, I am using this with dark magic ([systemd service](https://git.gurkan.in/gurkan/nixos-system-flake/src/commit/914d4f0ae730780c5240befa3bb9b746c46dc1ad/home-manager/lib/xserver.nix#L18), [udev rules](https://git.gurkan.in/gurkan/nixos-system-flake/src/commit/914d4f0ae730780c5240befa3bb9b746c46dc1ad/nixos/lib/laptop/loose.nix#L8)).
-Instructions for other distros are welcome, since I don't have enough incentive to write them (plus this tool is only really useful if it's integrated with udev).
+Instructions for other distros are welcome, since I don't have enough incentive to write them (plus this tool is only really useful if it's integrated with an init service + udev).
 
 For the testing/development purposes, you can use uv:
 - Clone this repo
