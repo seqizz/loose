@@ -6,32 +6,35 @@ An xrandr wrapper that lets you define layouts by monitor capabilities, makes fl
 
 ### Use case (or why I wrote this)
 
-I wrote this as a reaction to all other xrandr tools/wrappers which requires you to exactly define your setup (e.g. which monitor has which damn fingerprint, what input name it has etc.) and then failing to set up, since you plugged a cable on a different port.
+> I wrote this as a reaction to all other xrandr tools/wrappers which requires you to exactly define your setup (e.g. which monitor has which damn fingerprint, what input name it has etc.) and then failing to set up, since you plugged a cable on a different port.
 
-Come on, I just want to define some non-specific settings. Something like:
+Come on, I just want to be able to define some "preferences". Something like this:
 
-- If I plug 1 extra monitor, my preference list:
+- If I plug 1 extra monitor, I want either:
     1. Switch off the laptop's monitor and only use plugged monitor
     2. Put the new monitor to right of my laptop's screen
     3. Put the new monitor to left of my laptop's screen and rotate it 90 degrees
-- If I plug 2 monitors:
+- If I plug 2 monitors, I want either:
     1. Switch off the laptop's monitor and use monitor 1 on the left, 2 on the right
     2. Switch off the laptop's monitor and use monitor 2 on the left, 1 on the right
+- And so on...
+
+With loose, I can do it!
 
 ### Features
 
 - Configured with a yaml file (I know, I know..)
-- Accepts both explicit monitor names and aliases to define purposefully vague configurations
+- Accepts both explicit monitor names and aliases/placeholders to define "intentions" (e.g. "3 monitors" or "4k monitor")
 - Supports setting the resolution, rotation, (relative) position, refresh rate and primary monitor
 - If you don't define a setting (e.g. resolution or refresh rate), it will apply the "preferred" one from Xrandr
-- Supports multiple pre/post commands to run before/after applying the configuration (e.g. to set the DPI)
+- Supports multiple pre/post commands to run before/after applying the configuration (e.g. to set the DPI or restart WM)
 - Supports multiple configurations for multiple screen counts so you can "rotate" if you don't like the first applied one
-- It will try to detect the suitable devices for given aliases consistently (thus you can declare self-correcting preferences like "2 monitors" example above)
-- Something failed bad? Then it will try the global failback option defined in the config
+- It will try to detect and match suitable devices for given aliases consistently (thus you can declare self-correcting preferences like "2 monitors" example above)
+- Something failed bad? It will try the global failback option defined in the config
 
-### Configuration
+### Usage
 
-Just check the [example config](loose/example_config.yaml).
+Just check the [example config](loose/example_config.yaml) for real-life examples and explanations.
 
 ### Installation
 
