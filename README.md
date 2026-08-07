@@ -31,6 +31,7 @@ With loose, I can do it!
 - Supports multiple configurations for multiple screen counts so you can "rotate" if you don't like the first applied one
 - It will try to detect and match suitable devices for given aliases consistently (thus you can declare self-correcting preferences like "2 monitors" example above)
 - Something failed bad? It will try the global failback option defined in the config
+- Interactive rotation mode (`loose rotate --interactive`): previews each config's `comment` via a configurable notification command and waits a bit before applying, so you can skip ahead by rotating again during the preview window
 
 ### Usage
 

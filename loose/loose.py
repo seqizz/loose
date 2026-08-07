@@ -2,9 +2,13 @@
 
 import argparse
 import logging
+import os
 import pickle
+import shlex
+import signal
 import subprocess
 import sys
+import time
 from collections import defaultdict
 from copy import deepcopy
 from importlib.metadata import version as pkg_version
@@ -19,8 +23,6 @@ from os.path import (
 from pathlib import Path
 from pprint import pprint
 from shutil import which
-from time import sleep
-
 import jc
 import yamale
 from filelock import FileLock, Timeout
@@ -31,6 +33,8 @@ DEFAULT_CONFIG_FILE = f'{xdg_config_home()}/loose/config.yaml'
 PY_MAJOR_VERSION = 3
 PY_MINOR_VERSION = 10
 RUN_TIMEOUT_SEC = 30  # In case of a stuck process
+DEFAULT_INTERACTIVE_SLEEP_SEC = 3
+DEFAULT_INTERACTIVE_COMMAND = 'notify-send loose {comment} -t {timeout_ms}'
 VERSION = pkg_version('loose')
 
 
@@ -251,6 +255,11 @@ def get_parser(print_help: bool) -> argparse.Namespace:
         action='store_true',
         help='Only apply changes if connected devices or config changed',
     )
+    rotate_group.add_argument(
+        '--interactive',
+        action='store_true',
+        help='Preview next config via notification before applying, skip with subsequent rotations',
+    )
     rotate_parser.add_argument(
         '-i',
         '--ignore-failing-hooks',
@@ -419,7 +428,7 @@ def assert_unique_primary(data):
             primary_count = sum(
                 1
                 for _, config in single_config.items()
-                if config.get('primary', False)
+                if isinstance(config, dict) and config.get('primary', False)
             )
             if primary_count > 1:
                 raise ValueError(
@@ -615,6 +624,8 @@ def replace_aliases_with_real_names(
         if alias == 'hooks':
             replaced_config[alias] = config
             continue
+        if alias == 'comment':
+            continue
         if alias.startswith('_'):
             # This is an alias, replace it with the actual device name
             real_name = find_real_device_name(
@@ -667,7 +678,7 @@ def apply_xrandr_command(
     xrandr_command = [xrandr_binary]
     # Configure devices mentioned in the config
     for device, config in replaced_config.items():
-        if device == 'hooks':
+        if device in ('hooks', 'comment'):
             continue
         xrandr_command += ['--output', device]
         if 'disabled' in config:
@@ -816,6 +827,7 @@ def clear_impossible_configs(main_dict: dict, logger: logging.Logger) -> dict:
         for device in config:
             if (
                 device != 'hooks'  # Skip hooks section
+                and device != 'comment'  # Skip comment
                 and not device.startswith('_')  # Skip aliases
                 and device not in connected_device_names
             ):
@@ -904,7 +916,7 @@ def assign_aliases(main_dict: dict, logger: logging.Logger) -> dict:
     unassigned_keys_pool = set()
     for item in main_dict['active_config']:
         for key in item.keys():
-            if key != 'hooks' and key != 'is_current':
+            if key != 'hooks' and key != 'is_current' and key != 'comment':
                 unassigned_keys_pool.add(key)
 
     # Track which physical devices have been claimed by a key (explicit name or alias)
@@ -1024,7 +1036,8 @@ def assign_aliases(main_dict: dict, logger: logging.Logger) -> dict:
         }
 
         required_keys = {
-            k for k in config_candidate_keys_only.keys() if k != 'hooks'
+            k for k in config_candidate_keys_only.keys()
+            if k not in ('hooks', 'comment')
         }
 
         # For a candidate config to be applicable, every required_key must be in the assigned_keys_from_pool
@@ -1193,6 +1206,113 @@ def get_active_config(
     return config['on_screen_count'][connected_count]
 
 
+def _show_notification(
+    command: str, comment: str, sleep_sec: float, logger: logging.Logger
+) -> None:
+    """Show the preview using the configured command template.
+
+    {comment} is replaced with the shell-quoted comment text,
+    {timeout_ms} with the sleep duration in milliseconds.
+    """
+    rendered = command.replace('{comment}', shlex.quote(comment)).replace(
+        '{timeout_ms}', str(int(sleep_sec * 1000))
+    )
+    run_command(command=rendered, logger=logger)
+
+
+def rotate_interactive(
+    args: argparse.Namespace,
+    full_config: dict,
+    logger: logging.Logger,
+    main_dict: dict,
+    save_file: str,
+    ignore_failing_hooks: bool = False,
+) -> None:
+    """Interactive rotation with comment preview and SIGUSR1-based skipping."""
+    pid_path = path_join(dirname(save_file), 'loose.preview_pid')
+    active = main_dict['active_config']
+
+    # Find current index in rotation
+    current_index = 0
+    for i, config in enumerate(active):
+        if 'is_current' in config:
+            current_index = i
+            break
+
+    interactive_opts = full_config.get('interactive') or {}
+    sleep_sec = interactive_opts.get('sleep_sec', DEFAULT_INTERACTIVE_SLEEP_SEC)
+    notify_command = interactive_opts.get(
+        'command', DEFAULT_INTERACTIVE_COMMAND
+    )
+
+    advance_requested = False
+
+    def handle_sigusr1(signum, frame):
+        nonlocal advance_requested
+        advance_requested = True
+
+    signal.signal(signal.SIGUSR1, handle_sigusr1)
+
+    # Write PID so other loose processes can signal us
+    try:
+        with open(pid_path, 'w') as f:
+            f.write(str(os.getpid()))
+    except OSError as e:
+        logger.debug(f'Could not write preview PID file: {e}')
+
+    try:
+        while True:
+            # Advance to next config in rotation
+            current_index = (current_index + 1) % len(active)
+            next_config = active[current_index]
+
+            comment = next_config.get(
+                'comment', 'Next option (no comment found)'
+            )
+            logger.info(f'Preview: {comment}')
+            _show_notification(
+                command=notify_command,
+                comment=comment,
+                sleep_sec=sleep_sec,
+                logger=logger,
+            )
+
+            # Wait up to sleep_sec for SIGUSR1 (user wants to skip)
+            advance_requested = False
+            deadline = time.time() + sleep_sec
+            while time.time() < deadline:
+                if advance_requested:
+                    advance_requested = False
+                    break
+                time.sleep(0.1)
+            else:
+                # Timeout reached, apply this config
+                run_result = apply_xrandr_command(
+                    main_dict=main_dict,
+                    config_to_apply=next_config,
+                    logger=logger,
+                    dry_run=args.dry_run,
+                    ignore_failing_hooks=ignore_failing_hooks,
+                )
+                if not run_result:
+                    logger.error('Failed to apply the config, exiting!')
+                    exit(1)
+                if not args.dry_run:
+                    save_to_disk(
+                        applied_config=next_config,
+                        full_config=full_config,
+                        logger=logger,
+                        old_dict=main_dict,
+                        save_path=save_file,
+                    )
+                return
+    finally:
+        try:
+            os.remove(pid_path)
+        except FileNotFoundError:
+            pass
+
+
 def rotate(
     args: argparse.Namespace,
     full_config: dict,
@@ -1205,6 +1325,17 @@ def rotate(
     logger.debug(
         f'Got request to rotate.{" (DRY RUN)" if args.dry_run else ""}'
     )
+
+    if getattr(args, 'interactive', False):
+        rotate_interactive(
+            args=args,
+            full_config=full_config,
+            logger=logger,
+            main_dict=main_dict,
+            save_file=save_file,
+            ignore_failing_hooks=ignore_failing_hooks,
+        )
+        return
 
     # Find next configuration to apply
     next_config = get_next_config(
@@ -1246,7 +1377,7 @@ def _build_monitor_grid(config: dict) -> dict:
 
     # Collect positioning relationships
     relations = {}  # device -> (directive, target)
-    devices = [d for d in config if d != 'hooks']
+    devices = [d for d in config if d not in ('hooks', 'comment')]
     for device in devices:
         props = config[device]
         if not isinstance(props, dict):
@@ -1431,7 +1562,7 @@ def _render_config_layout(config: dict, identifiers: list = None) -> tuple:
     whether any device used the * marker for display defaults.
     """
     # Filter out non-device keys
-    devices = {k: v for k, v in config.items() if k != 'hooks'}
+    devices = {k: v for k, v in config.items() if k not in ('hooks', 'comment')}
     if not devices:
         return [], False, False
 
@@ -1646,12 +1777,9 @@ def fresh_start(
     return main_dict
 
 
-def main(save_path: str):
+def main(save_path: str, args: argparse.Namespace):
     # First check if the script is run with the correct Python version
     enforce_python_version()
-
-    # Parse the arguments
-    args = get_parser(print_help=True if len(sys.argv) == 1 else False)
 
     # Get the logger
     logger = get_logger(verbose=args.verbose)
@@ -1666,7 +1794,7 @@ def main(save_path: str):
     # We will sleep a bit to let hardware settle down
     # (e.g. when you plug-in a dock, it takes a bit to recognize multiple screens etc.)
     if args.command == 'rotate':
-        sleep(1)
+        time.sleep(1)
 
     # Construct the main dictionary, will use it for comparison
     new_main_dict = fresh_start(args=args, config=config, logger=logger)
@@ -1792,14 +1920,27 @@ def main_wrapper():
         poll_interval=0.05,
     )
 
+    # Parse args early to check for interactive mode before locking
+    args = get_parser(print_help=True if len(sys.argv) == 1 else False)
+
     try:
         with lock:
-            main(save_path=save_path)
+            main(save_path=save_path, args=args)
     except Timeout:
-        # Another instance is already running, all good
-        logger = get_logger()
-        logger.info('Another instance of loose is already running, skipping.')
-        exit(0)
+        if getattr(args, 'interactive', False):
+            # Interactive mode: signal the preview process to advance
+            pid_path = path_join(save_path, 'loose.preview_pid')
+            try:
+                with open(pid_path) as f:
+                    pid = int(f.read().strip())
+                os.kill(pid, signal.SIGUSR1)
+            except (FileNotFoundError, ValueError, ProcessLookupError):
+                pass
+            exit(0)
+        else:
+            logger = get_logger()
+            logger.info('Another instance of loose is already running, skipping.')
+            exit(0)
     except Exception as e:
         # Something else, dunno, log it and fail
         logger = get_logger()

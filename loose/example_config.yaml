@@ -92,6 +92,18 @@ on_screen_count:
     # we can swap them. (E.g. if loose assigned _1 alias to the "wrong" monitor).
     # With these declarations, we can simply rotate to the next one and keep the primary on the left.
 
+# Settings for `loose rotate --interactive` (optional, defaults shown).
+# In interactive mode loose shows the upcoming config's "comment" field via the
+# command below, waits sleep_sec seconds, and applies the config only if you
+# don't rotate again within that window (each extra rotation skips ahead).
+interactive:
+  # How many seconds each preview stays before applying
+  sleep_sec: 3
+  # Command used to display the preview. Placeholders:
+  #   {comment}    - the config's comment field, shell-quoted
+  #   {timeout_ms} - sleep_sec converted to milliseconds
+  command: notify-send loose {comment} -t {timeout_ms}
+
 # This is the failback configuration. If we can't find any suitable configuration
 # or something goes wrong, we will rely on this one. So it's a good idea to keep
 # this one as simple as possible. If you're a laptop user, you can use this

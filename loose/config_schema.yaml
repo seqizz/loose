@@ -1,11 +1,12 @@
 # schema.yaml
 on_screen_count: map(list(include('screen_config')), key=int())
 global_failback: map(include('device'), key=str())
+interactive: include('interactive_opts', required=False)
 
 ---
 
 screen_config:
-  map(any(include('device'), include('hooks')), key=str(), required=False)
+  map(any(include('device'), include('hooks'), str()), key=str(), required=False)
 
 device:
   resolution: str(required=False)
@@ -21,4 +22,8 @@ device:
 hooks:
   post: list(str(), required=False)
   pre: list(str(), required=False)
+
+interactive_opts:
+  sleep_sec: num(required=False)
+  command: str(required=False)
 
