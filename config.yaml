@@ -1,0 +1,107 @@
+on_screen_count:
+  1:
+    - _1:
+        resolution: 1920x1200
+        frequency: 60
+        primary: true
+      hooks:
+        pre:
+          - /devel/somewm/result/bin/somewm-client eval 'awesome.emit_signal("save-tags")'
+        post:
+          - 'echo "Xft.dpi: 118" | xrdb -merge'
+      comment: Only laptop screen
+  2:
+    - _1:
+        resolution: 3440x1440
+        frequency: 100
+        primary: true
+      hooks:
+        pre:
+          - /devel/somewm/result/bin/somewm-client eval 'awesome.emit_signal("save-tags")'
+        post:
+          - 'echo "Xft.dpi: 112" | xrdb -merge'
+      comment: 100Hz single external (DE)
+    - _2:
+        resolution: 3440x1440
+        primary: true
+      hooks:
+        pre:
+          - /devel/somewm/result/bin/somewm-client eval 'awesome.emit_signal("save-tags")'
+        post:
+          - 'echo "Xft.dpi: 118" | xrdb -merge'
+      comment: Any other big-ass external only
+    - _3:
+        resolution: 3840x2160
+        primary: true
+      hooks:
+        pre:
+          - /devel/somewm/result/bin/somewm-client eval 'awesome.emit_signal("save-tags")'
+        post:
+          - 'echo "Xft.dpi: 140" | xrdb -merge'
+      comment: TR big-ass monitor
+    - eDP-1:
+        resolution: 1920x1200
+        frequency: 60
+        primary: true
+      _2:
+        primary: false
+      hooks:
+        pre:
+          - /devel/somewm/result/bin/somewm-client eval 'awesome.emit_signal("save-tags")'
+        post:
+          - 'echo "Xft.dpi: 118" | xrdb -merge'
+      comment: Mirror (laptop native, external default resolution)
+    - eDP-1:
+        resolution: 1920x1200
+        frequency: 60
+        primary: true
+      _2:
+        right-of: eDP-1
+      hooks:
+        pre:
+          - /devel/somewm/result/bin/somewm-client eval 'awesome.emit_signal("save-tags")'
+        post:
+          - 'echo "Xft.dpi: 118" | xrdb -merge'
+      comment: Laptop on left, external right, both native resolution
+    - eDP-1:
+        primary: true
+        resolution: 1920x1200
+        frequency: 60
+      hooks:
+        pre:
+          - /devel/somewm/result/bin/somewm-client eval 'awesome.emit_signal("save-tags")'
+        post:
+          - 'echo "Xft.dpi: 118" | xrdb -merge'
+      comment: Only laptop monitor
+
+  3:
+    - _1:
+        primary: true
+      _2:
+        left-of: _1
+      eDP-1:
+        disabled: true
+      hooks:
+        pre:
+          - /devel/somewm/result/bin/somewm-client eval 'awesome.emit_signal("save-tags")'
+        post:
+          - 'echo "Xft.dpi: 112" | xrdb -merge'
+      comment: One right of the other (random 1)
+    - _1:
+        left-of: _2
+      _2:
+        primary: true
+      eDP-1:
+        disabled: true
+      hooks:
+        pre:
+          - /devel/somewm/result/bin/somewm-client eval 'awesome.emit_signal("save-tags")'
+        post:
+          - 'echo "Xft.dpi: 112" | xrdb -merge'
+      comment: One right of the other (random 2)
+
+global_failback:
+  eDP-1:
+    resolution: 1920x1200
+    primary: true
+    frequency: 60

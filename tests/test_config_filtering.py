@@ -1,7 +1,11 @@
 import pytest
 
-from loose.loose import clear_impossible_configs, get_active_config, get_next_config
-
+from loose.backends import XrandrBackend
+from loose.loose import (
+    clear_impossible_configs,
+    get_active_config,
+    get_next_config,
+)
 
 # --- get_next_config ---
 
@@ -41,7 +45,9 @@ class TestClearImpossibleConfigs:
         self, make_main_dict, device_edp1, device_dp2_disconnected, logger
     ):
         active_config = [{'DP-2': {'resolution': '1920x1080'}}]
-        md = make_main_dict([device_edp1, device_dp2_disconnected], active_config)
+        md = make_main_dict(
+            [device_edp1, device_dp2_disconnected], active_config
+        )
         result = clear_impossible_configs(md, logger)
         assert len(result['active_config']) == 0
 
@@ -65,20 +71,26 @@ class TestClearImpossibleConfigs:
         result = clear_impossible_configs(md, logger)
         assert len(result['active_config']) == 1
 
-    def test_removes_nonexistent_device_config(self, make_main_dict, device_edp1, logger):
+    def test_removes_nonexistent_device_config(
+        self, make_main_dict, device_edp1, logger
+    ):
         """Config referencing a device name that doesn't exist at all."""
         active_config = [{'FAKE-1': {'resolution': '1920x1080'}}]
         md = make_main_dict([device_edp1], active_config)
         result = clear_impossible_configs(md, logger)
         assert len(result['active_config']) == 0
 
-    def test_mixed_valid_and_invalid(self, make_main_dict, device_edp1, device_dp2_disconnected, logger):
+    def test_mixed_valid_and_invalid(
+        self, make_main_dict, device_edp1, device_dp2_disconnected, logger
+    ):
         """One valid config and one referencing a disconnected device."""
         active_config = [
             {'eDP-1': {'resolution': '1920x1080'}},
             {'DP-2': {'resolution': '1920x1080'}},
         ]
-        md = make_main_dict([device_edp1, device_dp2_disconnected], active_config)
+        md = make_main_dict(
+            [device_edp1, device_dp2_disconnected], active_config
+        )
         result = clear_impossible_configs(md, logger)
         assert len(result['active_config']) == 1
         assert 'eDP-1' in result['active_config'][0]
@@ -94,7 +106,9 @@ class TestGetActiveConfig:
             'global_failback': {'_1': {}},
         }
         md = make_main_dict([device_edp1], [])
-        result = get_active_config(md, config, logger, dry_run=True)
+        result = get_active_config(
+            md, config, logger, dry_run=True, backend=XrandrBackend()
+        )
         assert result == [{'_1': {}}]
 
     def test_no_matching_count_triggers_failback(
@@ -114,5 +128,7 @@ class TestGetActiveConfig:
             'loose.loose.apply_global_failback', side_effect=SystemExit(1)
         )
         with pytest.raises(SystemExit):
-            get_active_config(md, config, logger, dry_run=True)
+            get_active_config(
+                md, config, logger, dry_run=True, backend=XrandrBackend()
+            )
         mock_failback.assert_called_once()

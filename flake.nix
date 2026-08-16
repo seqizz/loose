@@ -6,17 +6,24 @@
     flake-utils.url = "github:numtide/flake-utils";
   };
 
-  outputs = { self, nixpkgs, flake-utils }:
-    flake-utils.lib.eachDefaultSystem (system:
+  outputs =
+    {
+      self,
+      nixpkgs,
+      flake-utils,
+    }:
+    flake-utils.lib.eachDefaultSystem (
+      system:
       let
         pkgs = nixpkgs.legacyPackages.${system};
         python = pkgs.python3;
         pyproject = builtins.fromTOML (builtins.readFile ./pyproject.toml);
-        pyedid = python.pkgs.callPackage ./nix/pyedid.nix {};
+        pyedid = python.pkgs.callPackage ./nix/pyedid.nix { };
         # Vendored because of security issues on previous versions
         # XXX: Remove later if I can just declare 4.2.1 in pyproject.toml
-        filelock = python.pkgs.callPackage ./nix/filelock.nix {};
-      in {
+        filelock = python.pkgs.callPackage ./nix/filelock.nix { };
+      in
+      {
         packages.default = python.pkgs.buildPythonApplication {
           pname = "loose";
           version = pyproject.project.version;
@@ -58,9 +65,22 @@
             description = "Another xrandr wrapper for multi-monitor setups";
             homepage = "https://git.gurkan.in/gurkan/loose";
             license = licenses.gpl3;
-            maintainers = ["seqizz"];
+            maintainers = [ "seqizz" ];
             platforms = platforms.linux;
           };
+        };
+
+        # Variant with wlr-randr on PATH, for wlroots (sway/river/labwc) sessions.
+        # It is kept out of the default package so X11-only machines don't pull
+        # the Wayland closure in; the wlroots backend checks PATH at runtime.
+        packages.loose-wayland = pkgs.symlinkJoin {
+          name = "loose-wayland-${packages.default.version}";
+          paths = [ packages.default ];
+          nativeBuildInputs = [ pkgs.makeWrapper ];
+          postBuild = ''
+            wrapProgram $out/bin/loose \
+              --prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.wlr-randr ]}
+          '';
         };
 
         devShells.default = pkgs.mkShell {
@@ -68,6 +88,7 @@
             python
             pkgs.uv
             pkgs.xrandr
+            pkgs.wlr-randr
           ];
         };
       }

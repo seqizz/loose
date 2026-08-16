@@ -31,7 +31,11 @@ def device_edp1():
                 'resolution_width': 1920,
                 'resolution_height': 1080,
                 'frequencies': [
-                    {'frequency': 60, 'is_current': True, 'is_preferred': True},
+                    {
+                        'frequency': 60,
+                        'is_current': True,
+                        'is_preferred': True,
+                    },
                 ],
             },
         ],
@@ -52,14 +56,22 @@ def device_hdmi1():
                 'resolution_width': 3440,
                 'resolution_height': 1440,
                 'frequencies': [
-                    {'frequency': 100, 'is_current': True, 'is_preferred': True},
+                    {
+                        'frequency': 100,
+                        'is_current': True,
+                        'is_preferred': True,
+                    },
                 ],
             },
             {
                 'resolution_width': 1920,
                 'resolution_height': 1200,
                 'frequencies': [
-                    {'frequency': 60, 'is_current': False, 'is_preferred': False},
+                    {
+                        'frequency': 60,
+                        'is_current': False,
+                        'is_preferred': False,
+                    },
                 ],
             },
         ],
@@ -80,7 +92,11 @@ def device_dp1():
                 'resolution_width': 1920,
                 'resolution_height': 1200,
                 'frequencies': [
-                    {'frequency': 60, 'is_current': False, 'is_preferred': True},
+                    {
+                        'frequency': 60,
+                        'is_current': False,
+                        'is_preferred': True,
+                    },
                 ],
             },
         ],
@@ -98,6 +114,69 @@ def device_dp2_disconnected():
         'is_connected': False,
         'resolution_modes': [],
     }
+
+
+@pytest.fixture
+def wlr_randr_json():
+    """Raw "wlr-randr --json" output for a laptop + external display setup.
+
+    Shaped after wlr-randr 0.4.x, trimmed to the keys the backend reads.
+    Mirrors device_edp1 / device_hdmi1 so both backends share assertions.
+    """
+    return [
+        {
+            'name': 'eDP-1',
+            'make': 'AU Optronics',
+            'model': '0x1234',
+            'serial': '',
+            'enabled': True,
+            'scale': 1.0,
+            'transform': 'normal',
+            'position': {'x': 0, 'y': 0},
+            'modes': [
+                {
+                    'width': 1920,
+                    'height': 1080,
+                    'refresh': 59.951,
+                    'preferred': True,
+                    'current': True,
+                },
+                {
+                    'width': 1920,
+                    'height': 1080,
+                    'refresh': 48.001,
+                    'preferred': False,
+                    'current': False,
+                },
+                {
+                    'width': 1280,
+                    'height': 720,
+                    'refresh': 60.0,
+                    'preferred': False,
+                    'current': False,
+                },
+            ],
+        },
+        {
+            'name': 'HDMI-A-1',
+            'make': 'Dell Inc.',
+            'model': 'DELL U3415W',
+            'serial': 'ABC123',
+            'enabled': False,
+            'scale': 1.0,
+            'transform': 'normal',
+            'position': {'x': 0, 'y': 0},
+            'modes': [
+                {
+                    'width': 3440,
+                    'height': 1440,
+                    'refresh': 99.982,
+                    'preferred': True,
+                    'current': False,
+                },
+            ],
+        },
+    ]
 
 
 @pytest.fixture

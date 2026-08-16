@@ -1,9 +1,6 @@
 import subprocess
 
-import pytest
-
-from loose.loose import _execute_hooks, _execute_xrandr, run_command
-
+from loose.loose import _execute_display_command, _execute_hooks, run_command
 
 # --- run_command ---
 
@@ -88,20 +85,32 @@ class TestExecuteHooks:
         assert mock_run.call_count == 2
 
 
-# --- _execute_xrandr ---
+# --- _execute_display_command ---
 
 
-class TestExecuteXrandr:
+class TestExecuteDisplayCommand:
     def test_dry_run_no_execution(self, mocker, logger):
         mock_run = mocker.patch('loose.loose.run_command')
-        result = _execute_xrandr(['xrandr', '--auto'], {}, logger, dry_run=True)
+        result = _execute_display_command(
+            ['xrandr', '--auto'], {}, logger, dry_run=True
+        )
         assert result is True
         mock_run.assert_not_called()
 
     def test_success(self, mocker, logger):
         mocker.patch('loose.loose.run_command', return_value=0)
-        assert _execute_xrandr(['xrandr', '--auto'], {}, logger, dry_run=False) is True
+        assert (
+            _execute_display_command(
+                ['xrandr', '--auto'], {}, logger, dry_run=False
+            )
+            is True
+        )
 
     def test_failure(self, mocker, logger):
         mocker.patch('loose.loose.run_command', return_value=1)
-        assert _execute_xrandr(['xrandr', '--auto'], {}, logger, dry_run=False) is False
+        assert (
+            _execute_display_command(
+                ['xrandr', '--auto'], {}, logger, dry_run=False
+            )
+            is False
+        )

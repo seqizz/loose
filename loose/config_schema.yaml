@@ -17,6 +17,7 @@ device:
   above: str(required=False)
   below: str(required=False)
   rotate: str(required=False)
+  scale: num(required=False)
   disabled: bool(required=False)
 
 hooks:
