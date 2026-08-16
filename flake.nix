@@ -13,7 +13,7 @@
         python = pkgs.python3;
         pyproject = builtins.fromTOML (builtins.readFile ./pyproject.toml);
         pyedid = python.pkgs.callPackage ./nix/pyedid.nix {};
-      in {
+      in rec {
         packages.default = python.pkgs.buildPythonApplication {
           pname = "loose";
           version = pyproject.project.version;
@@ -60,11 +60,25 @@
           };
         };
 
+        # Variant with wlr-randr on PATH, for wlroots (sway/river/labwc) sessions.
+        # It is kept out of the default package so X11-only machines don't pull
+        # the Wayland closure in; the wlroots backend checks PATH at runtime.
+        packages.loose-wayland = pkgs.symlinkJoin {
+          name = "loose-wayland-${packages.default.version}";
+          paths = [ packages.default ];
+          nativeBuildInputs = [ pkgs.makeWrapper ];
+          postBuild = ''
+            wrapProgram $out/bin/loose \
+              --prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.wlr-randr ]}
+          '';
+        };
+
         devShells.default = pkgs.mkShell {
           packages = [
             python
             pkgs.uv
             pkgs.xrandr
+            pkgs.wlr-randr
           ];
         };
       }

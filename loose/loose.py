@@ -22,12 +22,19 @@ from os.path import (
 )
 from pathlib import Path
 from pprint import pprint
-from shutil import which
-import jc
+
 import yamale
 from filelock import FileLock, Timeout
 from xdg_base_dirs import xdg_config_home, xdg_state_home
 from yaml import safe_load
+
+from loose.backends import (
+    Backend,
+    BackendError,
+    _get_preferred_mode,
+    auto_scale_for,
+    detect_backend,
+)
 
 DEFAULT_CONFIG_FILE = f'{xdg_config_home()}/loose/config.yaml'
 PY_MAJOR_VERSION = 3
@@ -38,77 +45,14 @@ DEFAULT_INTERACTIVE_COMMAND = 'notify-send loose {comment} -t {timeout_ms}'
 VERSION = pkg_version('loose')
 
 
-def build_main_dict(config: dict) -> dict:
-    xrandr_output = parse_xrandr()
-    main_dict = {'identifiers': []}
-    active_devices = []
+def build_main_dict(config: dict, backend: Backend) -> dict:
+    """Builds the working dictionary from the backend's view of the hardware"""
 
-    # First pass to get active devices
-    for screen in xrandr_output['screens']:
-        for device in screen['devices']:
-            for resolution in device['resolution_modes']:
-                for frequency in resolution['frequencies']:
-                    if frequency['is_current']:
-                        active_devices.append(device['device_name'])
-
-    # Get full device information including EDIDs
-    parsed_props_xrandr = parse_xrandr(props=True)
-
-    # Create a set of all device names from the basic xrandr output
-    all_devices = {
-        device['device_name']
-        for screen in xrandr_output['screens']
-        for device in screen['devices']
+    return {
+        'identifiers': backend.probe(),
+        'VERSION': VERSION,
+        'raw_config': deepcopy(config),
     }
-
-    # Process connected devices first
-    for screen in parsed_props_xrandr['screens']:
-        for device in screen['devices']:
-            if device['is_connected']:
-                resolution_modes = next(
-                    (
-                        d['resolution_modes']
-                        for s in xrandr_output['screens']
-                        for d in s['devices']
-                        if d['device_name'] == device['device_name']
-                    ),
-                    [],
-                )
-
-                device_info = {
-                    'device_name': device['device_name'],
-                    'product_id': device.get('props', {})
-                    .get('EdidModel', {})
-                    .get('product_id'),
-                    'is_active': device['device_name'] in active_devices,
-                    'is_connected': True,
-                    'resolution_modes': resolution_modes,
-                }
-                main_dict['identifiers'].append(device_info)
-                all_devices.remove(device['device_name'])
-
-    # Now add disconnected devices, to disable later
-    for device_name in all_devices:
-        device_info = {
-            'device_name': device_name,
-            'product_id': None,
-            'is_active': False,
-            'is_connected': False,
-            'resolution_modes': [],
-        }
-        main_dict['identifiers'].append(device_info)
-
-    # Sort identifiers first by connection status (connected first), then by product_id/name
-    main_dict['identifiers'].sort(
-        key=lambda x: (
-            not x['is_connected'],
-            x['product_id'] or x['device_name'],
-        )
-    )
-    main_dict['VERSION'] = VERSION
-    main_dict['raw_config'] = deepcopy(config)
-
-    return main_dict
 
 
 def run_command(
@@ -397,30 +341,6 @@ def load_from_disk(filename: str, logger: logging.Logger):
     return _safe_file_operation(filename, 'read_pickle', logger)
 
 
-def parse_xrandr(props: bool = False) -> dict:
-    """Parses the output of xrandr command and returns as dictionary"""
-
-    command = ['xrandr']
-    if props:
-        command.append('--properties')
-    try:
-        outta = subprocess.check_output(command, text=True)
-    except subprocess.CalledProcessError as e:
-        raise RuntimeError(
-            f'xrandr failed (exit code {e.returncode}) — '
-            'is DISPLAY set? (loose requires X11)'
-        ) from e
-    except FileNotFoundError:
-        raise RuntimeError('xrandr not found — is it installed?')
-
-    # It was horror trying to parse that ^bull(?:l+)?shit$ with regex myself
-    # Kudos to jc: https://github.com/kellyjonbrazil/jc
-    parsed_data = jc.parse('xrandr', outta)
-
-    assert isinstance(parsed_data, dict)
-    return parsed_data
-
-
 def assert_unique_primary(data):
     """Asserts that there is only one primary screen for each config section"""
     for screen_count, config_list in data['on_screen_count'].items():
@@ -655,19 +575,15 @@ def replace_aliases_with_real_names(
     return replaced_config
 
 
-def apply_xrandr_command(
+def apply_config(
     main_dict: dict,
     config_to_apply: dict,
     logger: logging.Logger,
     dry_run: bool,
+    backend: Backend,
     ignore_failing_hooks: bool = False,
 ) -> bool:
-    """Applies the given config to the xrandr output"""
-
-    xrandr_binary = which('xrandr')
-    if not xrandr_binary:
-        logger.error('xrandr command could not be found in PATH!')
-        return False
+    """Applies the given config via the active backend"""
 
     replaced_config = replace_aliases_with_real_names(
         main_dict=main_dict,
@@ -675,46 +591,17 @@ def apply_xrandr_command(
         logger=logger,
     )
 
-    xrandr_command = [xrandr_binary]
-    # Configure devices mentioned in the config
-    for device, config in replaced_config.items():
-        if device in ('hooks', 'comment'):
-            continue
-        xrandr_command += ['--output', device]
-        if 'disabled' in config:
-            xrandr_command += ['--off']
-            continue
+    try:
+        command = backend.build_command(
+            replaced_config=replaced_config,
+            identifiers=main_dict['identifiers'],
+            logger=logger,
+        )
+    except BackendError as e:
+        logger.error(str(e))
+        return False
 
-        if 'resolution' in config:
-            xrandr_command += ['--mode', config['resolution']]
-        else:
-            xrandr_command += ['--auto']
-
-        if 'primary' in config:
-            xrandr_command += ['--primary']
-
-        if 'rotate' in config:
-            xrandr_command += ['--rotate', config['rotate']]
-        else:
-            xrandr_command += ['--rotate', 'normal']
-
-        for position in ['left-of', 'right-of', 'above', 'below']:
-            if position in config:
-                xrandr_command += ['--' + position, config[position]]
-
-        if 'frequency' in config:
-            xrandr_command += ['--rate', str(config['frequency'])]
-
-    # Turn off any device not explicitly configured
-    unconfigured_devices = [
-        device['device_name']
-        for device in main_dict['identifiers']
-        if device['device_name'] not in replaced_config
-    ]
-    for device in unconfigured_devices:
-        xrandr_command.extend(['--output', device, '--off'])
-
-    # Execute pre-hooks, xrandr command, and post-hooks
+    # Execute pre-hooks, the display command, and post-hooks
     if not _execute_hooks(
         config=replaced_config,
         hook_type='pre',
@@ -724,7 +611,7 @@ def apply_xrandr_command(
     ):
         return False
 
-    if not _execute_xrandr(xrandr_command, replaced_config, logger, dry_run):
+    if not _execute_display_command(command, replaced_config, logger, dry_run):
         return False
 
     _execute_hooks(
@@ -764,10 +651,10 @@ def _execute_hooks(
     return True
 
 
-def _execute_xrandr(
+def _execute_display_command(
     command: list, config: dict, logger: logging.Logger, dry_run: bool
 ) -> bool:
-    """Execute the xrandr command"""
+    """Execute the command built by the backend"""
     if dry_run:
         logger.info(f'DRY RUN: Would run command: {" ".join(command)}')
         logger.debug(f'Config for command: {config}')
@@ -776,7 +663,7 @@ def _execute_xrandr(
     logger.debug(f'Config for command: {config}')
     result = run_command(command=' '.join(command), logger=logger)
     if result != 0:
-        logger.error('xrandr command failed!')
+        logger.error('Display configuration command failed!')
         return False
     return True
 
@@ -842,13 +729,37 @@ def clear_impossible_configs(main_dict: dict, logger: logging.Logger) -> dict:
 
 
 def _validate_device_compatibility(
-    device: dict, config: dict, alias: str, logger: logging.Logger
+    device: dict,
+    config: dict,
+    alias: str,
+    logger: logging.Logger,
+    backend: Backend = None,
 ) -> bool:
-    """Validates if a device is compatible with the given config section"""
+    """Validates if a device is compatible with the given config section
+
+    A backend may accept a resolution the device does not advertise natively,
+    if it can reach that logical size by scaling a larger mode. Without a
+    backend the check stays a literal mode lookup.
+    """
     needed_x, needed_y = None, None
     if 'resolution' in config:
         needed_x, needed_y = (int(x) for x in config['resolution'].split('x'))
     needed_frequency = config.get('frequency')
+
+    def _scalable() -> bool:
+        """Whether the backend could reach this resolution by scaling"""
+        if backend is None or not needed_x or 'scale' in config:
+            return False
+        if not backend.find_scaled_mode(
+            device, needed_x, needed_y, needed_frequency
+        ):
+            return False
+        logger.debug(
+            f'Config with alias "{alias}" needs {needed_x}x{needed_y} which '
+            f'device "{device["device_name"]}" does not report, but it can be '
+            'reached by scaling a larger mode'
+        )
+        return True
 
     # Validate resolution and frequency together when both are specified
     if needed_x and needed_frequency:
@@ -861,6 +772,8 @@ def _validate_device_compatibility(
             )
             for mode in device['resolution_modes']
         ):
+            if _scalable():
+                return True
             logger.debug(
                 f'Config with alias "{alias}" is not applicable to device "{device["device_name"]}" due to resolution+frequency mismatch'
             )
@@ -872,6 +785,8 @@ def _validate_device_compatibility(
             and mode['resolution_height'] == needed_y
             for mode in device['resolution_modes']
         ):
+            if _scalable():
+                return True
             logger.debug(
                 f'Config with alias "{alias}" is not applicable to device "{device["device_name"]}" due to resolution mismatch'
             )
@@ -891,7 +806,9 @@ def _validate_device_compatibility(
     return True
 
 
-def assign_aliases(main_dict: dict, logger: logging.Logger) -> dict:
+def assign_aliases(
+    main_dict: dict, logger: logging.Logger, backend: Backend = None
+) -> dict:
     """
     Assigns aliases from the config to connected devices based on compatibility
     and ensures a 1:1 mapping during the assignment process.
@@ -952,7 +869,7 @@ def assign_aliases(main_dict: dict, logger: logging.Logger) -> dict:
                 if key in config_item:
                     # Check compatibility of this device against the config section using this key
                     if _validate_device_compatibility(
-                        device, config_item[key], key, logger
+                        device, config_item[key], key, logger, backend
                     ):
                         is_compatible = True
                         break  # Found compatibility
@@ -990,7 +907,7 @@ def assign_aliases(main_dict: dict, logger: logging.Logger) -> dict:
             for config_item in main_dict['active_config']:
                 if key in config_item:
                     if _validate_device_compatibility(
-                        device, config_item[key], key, logger
+                        device, config_item[key], key, logger, backend
                     ):
                         is_compatible = True
                         break  # Found compatibility
@@ -1036,7 +953,8 @@ def assign_aliases(main_dict: dict, logger: logging.Logger) -> dict:
         }
 
         required_keys = {
-            k for k in config_candidate_keys_only.keys()
+            k
+            for k in config_candidate_keys_only.keys()
             if k not in ('hooks', 'comment')
         }
 
@@ -1079,6 +997,26 @@ def assign_aliases(main_dict: dict, logger: logging.Logger) -> dict:
             ):
                 logger.debug(
                     f'Config candidate requires key "{required_key}" which maps to device "{assigned_device["device_name"]}", but device is already claimed by another key in this config. Candidate not applicable.'
+                )
+                is_candidate_applicable = False
+                break
+
+            # The global assignment above accepts a device if it fits *any* config
+            # using this key, so re-check it against this candidate's own
+            # requirements. Without this, a loose config like "_2: {primary: false}"
+            # can get an alias assigned to a device that a stricter config, e.g.
+            # "_2: {resolution: 3440x1440}", cannot actually drive.
+            if not _validate_device_compatibility(
+                device=assigned_device,
+                config=config_candidate_keys_only[required_key],
+                alias=required_key,
+                logger=logger,
+                backend=backend,
+            ):
+                logger.debug(
+                    f'Config candidate requires key "{required_key}" which maps to '
+                    f'device "{assigned_device["device_name"]}", but that device '
+                    "does not meet this config's requirements. Candidate not applicable."
                 )
                 is_candidate_applicable = False
                 break
@@ -1159,6 +1097,7 @@ def apply_global_failback(
     config: dict,
     logger: logging.Logger,
     dry_run: bool,
+    backend: Backend,
 ):
     """Applies the global failback directive
 
@@ -1175,11 +1114,12 @@ def apply_global_failback(
         exit(bool(not dry_run))
 
     # Can't even check the return of this, what are we going to do, exit? 😒
-    apply_xrandr_command(
+    apply_config(
         main_dict=main_dict,
         config_to_apply=config['global_failback'],
         logger=logger,
         dry_run=dry_run,
+        backend=backend,
     )
 
     # Failback implies error
@@ -1187,7 +1127,11 @@ def apply_global_failback(
 
 
 def get_active_config(
-    main_dict: dict, config: dict, logger: logging.Logger, dry_run: bool
+    main_dict: dict,
+    config: dict,
+    logger: logging.Logger,
+    dry_run: bool,
+    backend: Backend,
 ) -> dict:
     connected_count = len(
         [x for x in main_dict['identifiers'] if x['is_connected']]
@@ -1201,6 +1145,7 @@ def get_active_config(
             config=config,
             logger=logger,
             dry_run=dry_run,
+            backend=backend,
         )
 
     return config['on_screen_count'][connected_count]
@@ -1226,6 +1171,7 @@ def rotate_interactive(
     logger: logging.Logger,
     main_dict: dict,
     save_file: str,
+    backend: Backend,
     ignore_failing_hooks: bool = False,
 ) -> None:
     """Interactive rotation with comment preview and SIGUSR1-based skipping."""
@@ -1240,7 +1186,9 @@ def rotate_interactive(
             break
 
     interactive_opts = full_config.get('interactive') or {}
-    sleep_sec = interactive_opts.get('sleep_sec', DEFAULT_INTERACTIVE_SLEEP_SEC)
+    sleep_sec = interactive_opts.get(
+        'sleep_sec', DEFAULT_INTERACTIVE_SLEEP_SEC
+    )
     notify_command = interactive_opts.get(
         'command', DEFAULT_INTERACTIVE_COMMAND
     )
@@ -1287,11 +1235,12 @@ def rotate_interactive(
                 time.sleep(0.1)
             else:
                 # Timeout reached, apply this config
-                run_result = apply_xrandr_command(
+                run_result = apply_config(
                     main_dict=main_dict,
                     config_to_apply=next_config,
                     logger=logger,
                     dry_run=args.dry_run,
+                    backend=backend,
                     ignore_failing_hooks=ignore_failing_hooks,
                 )
                 if not run_result:
@@ -1319,6 +1268,7 @@ def rotate(
     logger: logging.Logger,
     main_dict: dict,
     save_file: str,
+    backend: Backend,
     ignore_failing_hooks: bool = False,
 ):
     """Rotates the current config to the next one"""
@@ -1333,6 +1283,7 @@ def rotate(
             logger=logger,
             main_dict=main_dict,
             save_file=save_file,
+            backend=backend,
             ignore_failing_hooks=ignore_failing_hooks,
         )
         return
@@ -1344,11 +1295,12 @@ def rotate(
     )
 
     # Apply the next config, shit gets real here, unless dry run is requested
-    run_result = apply_xrandr_command(
+    run_result = apply_config(
         main_dict=main_dict,
         config_to_apply=next_config,
         logger=logger,
         dry_run=args.dry_run,
+        backend=backend,
         ignore_failing_hooks=ignore_failing_hooks,
     )
 
@@ -1447,27 +1399,12 @@ def _build_monitor_grid(config: dict) -> dict:
     return positions
 
 
-def _get_preferred_mode(device_name: str, identifiers: list):
-    """Find preferred resolution/frequency for a device from xrandr data."""
-    for ident in identifiers:
-        if ident['device_name'] == device_name:
-            for mode in ident.get('resolution_modes', []):
-                for freq in mode.get('frequencies', []):
-                    if freq.get('is_preferred'):
-                        res = (
-                            f'{mode["resolution_width"]}'
-                            f'x{mode["resolution_height"]}'
-                        )
-                        return res, freq['frequency']
-    return None, None
-
-
 def _get_device_content_lines(
-    name: str, props: dict, identifiers: list = None
+    name: str, props: dict, identifiers: list = None, backend: Backend = None
 ) -> tuple:
     """Builds the text lines to display inside a monitor box.
 
-    Returns (lines, used_preferred, is_primary).
+    Returns (lines, used_preferred, is_primary, used_auto_scale).
     """
     is_primary = isinstance(props, dict) and props.get('primary', False)
     display_name = f'{name}\u00b9' if is_primary else name
@@ -1481,21 +1418,26 @@ def _get_device_content_lines(
             if pref_res and pref_freq:
                 lines.append(f'{pref_res} @ {pref_freq}Hz*')
                 used_preferred = True
-                return lines, used_preferred, is_primary
+                return lines, used_preferred, is_primary, False
         lines.append('(preferred)')
-        return lines, used_preferred, is_primary
+        return lines, used_preferred, is_primary, False
 
     disabled = props.get('disabled', False)
     if disabled:
         lines.append('(disabled)')
-        return lines, used_preferred, is_primary
+        return lines, used_preferred, is_primary, False
+
+    # The backend may reach a resolution the panel does not advertise by
+    # driving a bigger mode scaled down, mark it so the number is not a lie
+    auto_scale = auto_scale_for(name, props, identifiers or [], backend)
+    scale_marker = '\u02e2' if auto_scale else ''
 
     res = props.get('resolution')
     freq = props.get('frequency')
     if res and freq:
-        lines.append(f'{res} @ {freq}Hz')
+        lines.append(f'{res} @ {freq}Hz{scale_marker}')
     elif res:
-        lines.append(res)
+        lines.append(f'{res}{scale_marker}')
     elif freq:
         lines.append(f'@ {freq}Hz')
     else:
@@ -1513,11 +1455,14 @@ def _get_device_content_lines(
     if 'rotate' in props and props['rotate'] != 'normal':
         lines.append(f'rotate {props["rotate"]}')
 
+    if 'scale' in props:
+        lines.append(f'scale {props["scale"]}')
+
     for pos_key in ('left-of', 'right-of', 'above', 'below'):
         if pos_key in props:
             lines.append(f'{pos_key} {props[pos_key]}')
 
-    return lines, used_preferred, is_primary
+    return lines, used_preferred, is_primary, bool(auto_scale)
 
 
 def _render_monitor_box(
@@ -1555,16 +1500,20 @@ def _render_monitor_box(
     return rows
 
 
-def _render_config_layout(config: dict, identifiers: list = None) -> tuple:
+def _render_config_layout(
+    config: dict, identifiers: list = None, backend: Backend = None
+) -> tuple:
     """Renders a full config section as monitor layout with box-drawing chars.
 
     Returns (lines, used_preferred) where used_preferred indicates
     whether any device used the * marker for display defaults.
     """
     # Filter out non-device keys
-    devices = {k: v for k, v in config.items() if k not in ('hooks', 'comment')}
+    devices = {
+        k: v for k, v in config.items() if k not in ('hooks', 'comment')
+    }
     if not devices:
-        return [], False, False
+        return [], False, False, False
 
     # Build grid positions
     grid = _build_monitor_grid(config)
@@ -1572,15 +1521,18 @@ def _render_config_layout(config: dict, identifiers: list = None) -> tuple:
     # Compute content lines and minimum box sizes for each device
     any_preferred = False
     any_primary = False
+    any_auto_scale = False
     device_info = {}
     for name, props in devices.items():
-        content, used_pref, is_primary = _get_device_content_lines(
-            name, props, identifiers=identifiers
+        content, used_pref, is_primary, used_scale = _get_device_content_lines(
+            name, props, identifiers=identifiers, backend=backend
         )
         if used_pref:
             any_preferred = True
         if is_primary:
             any_primary = True
+        if used_scale:
+            any_auto_scale = True
         disabled = isinstance(props, dict) and props.get('disabled', False)
         # Minimum width: longest content line + 4 (borders + padding)
         min_width = max(len(line) for line in content) + 4
@@ -1593,6 +1545,10 @@ def _render_config_layout(config: dict, identifiers: list = None) -> tuple:
                     pw, ph = int(parts[0]), int(parts[1])
                 except ValueError:
                     pass
+        # Size the box by logical geometry, matching how the layout is solved
+        if isinstance(props, dict) and props.get('scale'):
+            pw = int(pw / props['scale'])
+            ph = int(ph / props['scale'])
         # Swap dimensions for rotated (portrait) monitors
         if isinstance(props, dict) and props.get('rotate') in (
             'left',
@@ -1674,6 +1630,7 @@ def _render_config_layout(config: dict, identifiers: list = None) -> tuple:
         [''.join(row).rstrip() for row in canvas],
         any_preferred,
         any_primary,
+        any_auto_scale,
     )
 
 
@@ -1681,12 +1638,14 @@ def show(
     main_dict: dict,
     config: dict,
     logger: logging.Logger,
+    backend: Backend = None,
 ):
     """Pretty-prints the current config as monitor layout with box-drawing"""
     # If no config has is_current, treat the first one as active
     has_current = any('is_current' in c for c in main_dict['active_config'])
     show_preferred = False
     show_primary = False
+    show_auto_scale = False
     identifiers = main_dict.get('identifiers', [])
 
     print()  # Blank line for separation
@@ -1709,13 +1668,15 @@ def show(
             header += ' (\u001b[32mactive\u001b[0m)'
         print(f'{header}:')
 
-        lines, used_pref, used_pri = _render_config_layout(
-            converted_config, identifiers=identifiers
+        lines, used_pref, used_pri, used_scale = _render_config_layout(
+            converted_config, identifiers=identifiers, backend=backend
         )
         if used_pref:
             show_preferred = True
         if used_pri:
             show_primary = True
+        if used_scale:
+            show_auto_scale = True
         for line in lines:
             print(line)
         print()
@@ -1727,13 +1688,15 @@ def show(
             config_to_convert=config['global_failback'],
             logger=logger,
         )
-        lines, used_pref, used_pri = _render_config_layout(
-            failback_config, identifiers=identifiers
+        lines, used_pref, used_pri, used_scale = _render_config_layout(
+            failback_config, identifiers=identifiers, backend=backend
         )
         if used_pref:
             show_preferred = True
         if used_pri:
             show_primary = True
+        if used_scale:
+            show_auto_scale = True
         for line in lines:
             print(line)
         print()
@@ -1743,16 +1706,22 @@ def show(
         print(' \u00b9 primary display')
     if show_preferred:
         print(' * preferred display defaults')
+    if show_auto_scale:
+        print(
+            ' \u02e2 auto-scaled: panel has no such mode, a larger one is '
+            'driven scaled down'
+        )
 
 
 def fresh_start(
     args: argparse.Namespace,
     config: dict,
     logger: logging.Logger,
+    backend: Backend,
 ) -> dict:
     """Creates a fresh state file in case of a new config or new devices"""
 
-    main_dict = build_main_dict(config=config)
+    main_dict = build_main_dict(config=config, backend=backend)
 
     main_dict['active_config'] = deepcopy(
         get_active_config(
@@ -1760,9 +1729,12 @@ def fresh_start(
             config=config,
             logger=logger,
             dry_run=args.dry_run,
+            backend=backend,
         )
     )
-    main_dict = assign_aliases(main_dict=main_dict, logger=logger)
+    main_dict = assign_aliases(
+        main_dict=main_dict, logger=logger, backend=backend
+    )
 
     # Quick sanity check, if there is no active config, we can't continue
     if len(main_dict['active_config']) == 0:
@@ -1772,6 +1744,7 @@ def fresh_start(
             config=config,
             logger=logger,
             dry_run=args.dry_run,
+            backend=backend,
         )
 
     return main_dict
@@ -1783,6 +1756,10 @@ def main(save_path: str, args: argparse.Namespace):
 
     # Get the logger
     logger = get_logger(verbose=args.verbose)
+
+    # Pick the display server adapter before anything touches the hardware
+    backend = detect_backend(logger=logger)
+    logger.debug(f'Using the "{backend.name}" backend')
 
     # Read the config file, if changed, we will start from scratch
     config = read_config(config_file=args.config, logger=logger)
@@ -1797,7 +1774,9 @@ def main(save_path: str, args: argparse.Namespace):
         time.sleep(1)
 
     # Construct the main dictionary, will use it for comparison
-    new_main_dict = fresh_start(args=args, config=config, logger=logger)
+    new_main_dict = fresh_start(
+        args=args, config=config, logger=logger, backend=backend
+    )
 
     connected_count = len(
         [x for x in new_main_dict['identifiers'] if x['is_connected']]
@@ -1896,6 +1875,7 @@ def main(save_path: str, args: argparse.Namespace):
             logger=logger,
             main_dict=main_dict,
             save_file=path_join(save_path, 'loose.statefile'),
+            backend=backend,
             ignore_failing_hooks=args.ignore_failing_hooks,
         )
     elif args.command == 'show':
@@ -1903,6 +1883,7 @@ def main(save_path: str, args: argparse.Namespace):
             main_dict=main_dict,
             config=config,
             logger=logger,
+            backend=backend,
         )
 
 
@@ -1939,7 +1920,9 @@ def main_wrapper():
             exit(0)
         else:
             logger = get_logger()
-            logger.info('Another instance of loose is already running, skipping.')
+            logger.info(
+                'Another instance of loose is already running, skipping.'
+            )
             exit(0)
     except Exception as e:
         # Something else, dunno, log it and fail

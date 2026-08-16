@@ -58,6 +58,11 @@ on_screen_count:
         resolution: 1920x1200
         right-of: _2
         rotate: left
+        # 💡 "scale" is only honored by the wlroots (Wayland) backend, where it
+        # means HiDPI scaling: 1.5 makes everything 1.5x bigger and shrinks the
+        # logical size of this screen to 1280x800. The x11 backend warns and
+        # ignores it, so the same config file stays usable on both.
+        # scale: 1.5
       hooks:
         pre:
           - example command stop
