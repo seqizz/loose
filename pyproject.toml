@@ -1,7 +1,7 @@
 [project]
 name = "loose"
 version = "0.6.0"
-description = "A simple tool to apply XrandR configurations"
+description = "A display layout wrapper for X11 (xrandr) and wlroots (wlr-randr) compositors"
 authors = [
     { name = "Gürkan", email = "gitoperations@gurkan.in" },
 ]

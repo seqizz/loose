@@ -29,6 +29,7 @@ from xdg_base_dirs import xdg_config_home, xdg_state_home
 from yaml import safe_load
 
 from loose.backends import (
+    POSITION_KEYS,
     Backend,
     BackendError,
     _get_preferred_mode,
@@ -1325,7 +1326,7 @@ def _build_monitor_grid(config: dict) -> dict:
     Returns {device_name: (row, col)} mapping.
     """
     positions = {}
-    positioning_keys = {'left-of', 'right-of', 'above', 'below'}
+    positioning_keys = POSITION_KEYS
 
     # Collect positioning relationships
     relations = {}  # device -> (directive, target)
@@ -1458,7 +1459,7 @@ def _get_device_content_lines(
     if 'scale' in props:
         lines.append(f'scale {props["scale"]}')
 
-    for pos_key in ('left-of', 'right-of', 'above', 'below'):
+    for pos_key in POSITION_KEYS:
         if pos_key in props:
             lines.append(f'{pos_key} {props[pos_key]}')
 
@@ -1758,7 +1759,11 @@ def main(save_path: str, args: argparse.Namespace):
     logger = get_logger(verbose=args.verbose)
 
     # Pick the display server adapter before anything touches the hardware
-    backend = detect_backend(logger=logger)
+    try:
+        backend = detect_backend(logger=logger)
+    except BackendError as e:
+        logger.error(str(e))
+        exit(1)
     logger.debug(f'Using the "{backend.name}" backend')
 
     # Read the config file, if changed, we will start from scratch
@@ -1774,9 +1779,13 @@ def main(save_path: str, args: argparse.Namespace):
         time.sleep(1)
 
     # Construct the main dictionary, will use it for comparison
-    new_main_dict = fresh_start(
-        args=args, config=config, logger=logger, backend=backend
-    )
+    try:
+        new_main_dict = fresh_start(
+            args=args, config=config, logger=logger, backend=backend
+        )
+    except BackendError as e:
+        logger.error(str(e))
+        exit(1)
 
     connected_count = len(
         [x for x in new_main_dict['identifiers'] if x['is_connected']]

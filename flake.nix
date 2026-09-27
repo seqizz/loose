@@ -1,5 +1,5 @@
 {
-  description = "A simple tool to apply XrandR configurations";
+  description = "A display layout wrapper for X11 (xrandr) and wlroots (wlr-randr) compositors";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
@@ -23,7 +23,7 @@
         # XXX: Remove later if I can just declare 4.2.1 in pyproject.toml
         filelock = python.pkgs.callPackage ./nix/filelock.nix { };
       in
-      {
+      rec {
         packages.default = python.pkgs.buildPythonApplication {
           pname = "loose";
           version = pyproject.project.version;
@@ -62,7 +62,7 @@
           '';
 
           meta = with pkgs.lib; {
-            description = "Another xrandr wrapper for multi-monitor setups";
+            description = "Display layout wrapper for X11 and wlroots multi-monitor setups";
             homepage = "https://git.gurkan.in/gurkan/loose";
             license = licenses.gpl3;
             maintainers = [ "seqizz" ];

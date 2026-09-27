@@ -14,7 +14,12 @@ from loose.backends import (
     detect_backend,
 )
 
-DISPLAY_VARS = ('LOOSE_BACKEND', 'WAYLAND_DISPLAY', 'DISPLAY')
+DISPLAY_VARS = (
+    'LOOSE_BACKEND',
+    'WAYLAND_DISPLAY',
+    'DISPLAY',
+    'XDG_SESSION_TYPE',
+)
 
 
 @pytest.fixture(autouse=True)
@@ -55,11 +60,24 @@ class TestDetectBackend:
         """Likely a wlroots session whose unit never got WAYLAND_DISPLAY."""
         mocker.patch('loose.backends.which', return_value='/usr/bin/wlr-randr')
         monkeypatch.setenv('DISPLAY', ':0')
+        monkeypatch.setenv('XDG_SESSION_TYPE', 'wayland')
         with caplog.at_level('WARNING'):
             backend = detect_backend(logger)
 
         assert isinstance(backend, XrandrBackend)
         assert 'import-environment' in caplog.text
+
+    def test_display_with_wlr_randr_but_no_wayland_hint_is_quiet(
+        self, monkeypatch, mocker, logger, caplog
+    ):
+        """Plain X11 session with wlr-randr installed must not be nagged."""
+        mocker.patch('loose.backends.which', return_value='/usr/bin/wlr-randr')
+        monkeypatch.setenv('DISPLAY', ':0')
+        with caplog.at_level('WARNING'):
+            backend = detect_backend(logger)
+
+        assert isinstance(backend, XrandrBackend)
+        assert caplog.text == ''
 
     def test_display_without_wlr_randr_is_quiet(
         self, monkeypatch, logger, caplog, no_wlr_randr

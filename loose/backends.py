@@ -483,18 +483,24 @@ def _resolve_exact_frequency(
                 or mode['resolution_height'] != height
             ):
                 continue
-            frequencies = [f['frequency'] for f in mode['frequencies']]
+            frequencies = mode['frequencies']
             if not frequencies:
                 return None
             if wanted is None:
-                # No preference given, mirror "xrandr --mode" and take the fastest
-                return max(frequencies)
-            for frequency in frequencies:
-                if round(frequency) == round(wanted):
-                    return frequency
+                # Prefer the advertised preferred/current rate over the fastest.
+                # xrandr picks the preferred mode for a bare resolution, and a
+                # panel with a 60Hz-preferred + 144Hz mode should not jump to 144.
+                for flag in ('is_preferred', 'is_current'):
+                    for entry in frequencies:
+                        if entry.get(flag):
+                            return entry['frequency']
+                return max(entry['frequency'] for entry in frequencies)
+            for entry in frequencies:
+                if round(entry['frequency']) == round(wanted):
+                    return entry['frequency']
             logger.warning(
                 f'Device "{device_name}" does not report {wanted}Hz at '
-                f'{resolution}, passing the configured value through'
+                f'{resolution}'
             )
             return None
 
@@ -511,25 +517,30 @@ def _wlr_output_mode(
 
     Returns (mode, auto_scale). A mode of None means "use --preferred", and an
     auto_scale of None means the mode is driven at its native size.
+
+    Raises BackendError when the requested resolution cannot be produced at all,
+    either natively or by scaling. Emitting a mode wlr-randr cannot match would
+    just defer the failure to a less clear wlr-randr error.
     """
     resolution = config.get('resolution')
     if not resolution:
         return None, None
 
     wanted = config.get('frequency')
-    passthrough = (
-        f'{resolution}@{wanted}Hz' if wanted is not None else resolution
-    )
 
     try:
         width, height = (int(x) for x in resolution.split('x'))
     except ValueError:
-        return passthrough, None
+        raise BackendError(
+            f'Invalid resolution "{resolution}" for device "{device_name}", '
+            'expected WIDTHxHEIGHT'
+        )
 
     device = _find_device(identifiers, device_name)
     if device is None:
-        # Nothing to resolve against, hand the configured values over as-is
-        return passthrough, None
+        raise BackendError(
+            f'Device "{device_name}" not found in the current display state'
+        )
 
     if _has_exact_mode(device, width, height, wanted):
         frequency = _resolve_exact_frequency(
@@ -541,24 +552,35 @@ def _wlr_output_mode(
         )
         if frequency is not None:
             return f'{resolution}@{frequency}Hz', None
-        return passthrough, None
+        return (
+            f'{resolution}@{wanted}Hz' if wanted is not None else resolution
+        ), None
 
-    if 'scale' not in config:
-        scaled = _find_scaled_mode(device, width, height, wanted)
-        if scaled:
-            mode_width, mode_height, refresh, scale = scaled
-            logger.info(
-                f'Device "{device_name}" has no {resolution} mode, driving it '
-                f'at {mode_width}x{mode_height}@{refresh}Hz with scale {scale} '
-                'to reach that logical size'
-            )
-            return f'{mode_width}x{mode_height}@{refresh}Hz', scale
+    # An explicit scale cannot invent a mode, it only resizes a real one
+    if 'scale' in config:
+        raise BackendError(
+            f'Device "{device_name}" has no native {resolution}'
+            + (f'@{wanted}Hz' if wanted is not None else '')
+            + ' mode, but the config sets an explicit "scale". Drop "scale" to '
+            'let loose auto-scale, or use a mode the panel advertises.'
+        )
 
-    logger.warning(
-        f'Device "{device_name}" does not report a {resolution} mode and it '
-        'cannot be reached by scaling, passing the configured value through'
+    scaled = _find_scaled_mode(device, width, height, wanted)
+    if scaled:
+        mode_width, mode_height, refresh, scale = scaled
+        logger.info(
+            f'Device "{device_name}" has no {resolution} mode, driving it '
+            f'at {mode_width}x{mode_height}@{refresh}Hz with scale {scale} '
+            'to reach that logical size'
+        )
+        return f'{mode_width}x{mode_height}@{refresh}Hz', scale
+
+    raise BackendError(
+        f'Device "{device_name}" cannot reach {resolution}'
+        + (f'@{wanted}Hz' if wanted is not None else '')
+        + ': no native mode and no larger mode with a matching aspect ratio '
+        'to scale'
     )
-    return passthrough, None
 
 
 def _logical_size(
@@ -861,13 +883,19 @@ def detect_backend(logger: logging.Logger) -> Backend:
         return WlrootsBackend()
 
     if environ.get('DISPLAY'):
-        if WlrootsBackend.is_available():
+        # Warn only when the session looks like Wayland: wlr-randr installed and
+        # XDG_SESSION_TYPE=wayland but WAYLAND_DISPLAY missing. Plain X11 users
+        # with wlr-randr around should not be nagged on every run.
+        if (
+            WlrootsBackend.is_available()
+            and environ.get('XDG_SESSION_TYPE', '').lower() == 'wayland'
+        ):
             logger.warning(
                 'DISPLAY is set but WAYLAND_DISPLAY is not, while wlr-randr is '
-                'installed. Falling back to the x11 backend. If this is a '
-                'wlroots session (e.g. loose started from a systemd user unit), '
-                'the environment is incomplete — try "systemctl --user '
-                'import-environment WAYLAND_DISPLAY".'
+                'installed and XDG_SESSION_TYPE=wayland. Falling back to the '
+                'x11 backend. If this is a wlroots session (e.g. loose started '
+                'from a systemd user unit), the environment is incomplete. '
+                'Try "systemctl --user import-environment WAYLAND_DISPLAY".'
             )
         logger.debug('DISPLAY is set, using the x11 backend')
         return XrandrBackend()

@@ -150,12 +150,70 @@ class TestFrequencyResolution:
             == 59.951
         )
 
-    def test_no_frequency_takes_fastest_mode(self, probed, logger):
+    def test_no_frequency_prefers_preferred_mode(self, probed, logger):
         assert (
             _resolve_exact_frequency(
                 'eDP-1', '1920x1080', None, probed, logger
             )
             == 59.951
+        )
+
+    def test_no_frequency_prefers_preferred_over_fastest(self, logger):
+        device = {
+            'device_name': 'DP-1',
+            'resolution_modes': [
+                {
+                    'resolution_width': 2560,
+                    'resolution_height': 1440,
+                    'frequencies': [
+                        {
+                            'frequency': 60.0,
+                            'is_current': True,
+                            'is_preferred': True,
+                        },
+                        {
+                            'frequency': 144.0,
+                            'is_current': False,
+                            'is_preferred': False,
+                        },
+                    ],
+                },
+            ],
+        }
+        assert (
+            _resolve_exact_frequency(
+                'DP-1', '2560x1440', None, [device], logger
+            )
+            == 60.0
+        )
+
+    def test_no_preferred_falls_back_to_fastest(self, logger):
+        device = {
+            'device_name': 'DP-1',
+            'resolution_modes': [
+                {
+                    'resolution_width': 2560,
+                    'resolution_height': 1440,
+                    'frequencies': [
+                        {
+                            'frequency': 60.0,
+                            'is_current': False,
+                            'is_preferred': False,
+                        },
+                        {
+                            'frequency': 144.0,
+                            'is_current': False,
+                            'is_preferred': False,
+                        },
+                    ],
+                },
+            ],
+        }
+        assert (
+            _resolve_exact_frequency(
+                'DP-1', '2560x1440', None, [device], logger
+            )
+            == 144.0
         )
 
     def test_unavailable_frequency_returns_none(self, probed, logger):
@@ -177,14 +235,11 @@ class TestFrequencyResolution:
             None,
         )
 
-    def test_mode_string_passes_config_value_through_when_unresolvable(
-        self, probed, logger
-    ):
+    def test_unresolvable_frequency_raises(self, probed, logger):
+        """144Hz is not on the panel, so the mode string would fail in wlr-randr."""
         config = {'resolution': '1920x1080', 'frequency': 144}
-        assert _wlr_output_mode('eDP-1', config, probed, logger) == (
-            '1920x1080@144Hz',
-            None,
-        )
+        with pytest.raises(BackendError, match='1920x1080@144Hz'):
+            _wlr_output_mode('eDP-1', config, probed, logger)
 
     def test_no_resolution_means_no_mode(self, probed, logger):
         assert _wlr_output_mode(
@@ -428,10 +483,10 @@ class TestAutoScaleCommand:
             '0,0',
         ]
 
-    def test_explicit_scale_disables_auto_scaling(
+    def test_explicit_scale_requires_a_real_mode(
         self, backend, hidpi_panel, logger
     ):
-        """An explicit scale means the user knows what they want."""
+        """Explicit scale cannot invent a mode, it only resizes a real one."""
         config = {
             'eDP-1': {
                 'resolution': '1920x1200',
@@ -439,9 +494,8 @@ class TestAutoScaleCommand:
                 'scale': 2,
             }
         }
-        command = backend.build_command(config, [hidpi_panel], logger)
-        assert command[command.index('--mode') + 1] == '1920x1200@60Hz'
-        assert command[command.index('--scale') + 1] == '2'
+        with pytest.raises(BackendError, match='explicit'):
+            backend.build_command(config, [hidpi_panel], logger)
 
     def test_exact_mode_gets_no_scale(self, backend, probed, logger):
         config = {
