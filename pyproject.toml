@@ -5,7 +5,7 @@ description = "A simple tool to apply XrandR configurations"
 authors = [
     { name = "Gürkan", email = "gitoperations@gurkan.in" },
 ]
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 dependencies = [
     "typing-extensions>=4.4.0",
     "jc>=1.25.0",
@@ -13,7 +13,7 @@ dependencies = [
     "xdg-base-dirs>=6.0.1",
     "pyedid>=1.0.3",
     "yamale>=4.0.4",
-    "filelock>=3.16.1",
+    "filelock>=4.2.1",
 ]
 
 [project.scripts]
