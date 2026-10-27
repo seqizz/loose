@@ -13,6 +13,9 @@
         python = pkgs.python3;
         pyproject = builtins.fromTOML (builtins.readFile ./pyproject.toml);
         pyedid = python.pkgs.callPackage ./nix/pyedid.nix {};
+        # Vendored because of security issues on previous versions
+        # XXX: Remove later if I can just declare 4.2.1 in pyproject.toml
+        filelock = python.pkgs.callPackage ./nix/filelock.nix {};
       in {
         packages.default = python.pkgs.buildPythonApplication {
           pname = "loose";
